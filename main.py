@@ -56,7 +56,7 @@ conversation_memory: dict = {}   # session_id → list of messages
 rate_limit_store: dict = {}      # ip → [timestamps]
 jobs: dict = {}                  # job_id → status dict
 
-MAX_FILE_SIZE = 20 * 1024 * 1024   # 20MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 RATE_LIMIT = 15                     # requests per minute
 FILE_EXPIRY_HOURS = 24
 
@@ -156,7 +156,7 @@ async def read_any_file(file: UploadFile) -> tuple:
     raw = await file.read()
 
     if len(raw) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail=f"File too large. Max size is {MAX_FILE_SIZE // 1024 // 1024}MB")
+        raise HTTPException(status_code=413, detail=f"File too large. Max size is {MAX_FILE_SIZE // 1024 // 1024}MB per file")
 
     filename = (file.filename or "").lower()
 
@@ -215,7 +215,11 @@ async def read_any_file(file: UploadFile) -> tuple:
 # SYSTEM PROMPT
 # ══════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are XLforge, the world's most advanced AI Excel expert. You read any file, understand it completely, and produce perfect, professional Excel spreadsheets.
+SYSTEM_PROMPT = """You are XLforge, the world's most advanced AI Excel expert. You read any file in ANY LANGUAGE, understand it completely, and produce perfect, professional Excel spreadsheets.
+
+LANGUAGE RULE: You understand and respond to prompts in ANY language — English, Hindi, Urdu, Arabic, French, Spanish, Chinese, Russian, German, Turkish, Bengali, Punjabi, or any other language. Always detect the language and process accordingly. Never reject a prompt due to language.
+
+SMART UNDERSTANDING RULE: Even if the prompt is unclear, misspelled, incomplete, or vague — you ALWAYS try your best to understand the intent and generate a useful Excel file. Never say you don't understand. Make your best guess and produce output.
 
 OUTPUT RULE: Return ONLY a valid JSON object. Nothing else. No markdown. No explanation. No text before or after the JSON.
 
@@ -281,6 +285,13 @@ You MUST evaluate every math expression and put the INTEGER result, never a stri
 IF the Answer/Result column already has values, VERIFY them and correct wrong ones.
 ALWAYS output answers as integers or floats, NEVER as strings.
 
+SUMMARY ROW RULE — CRITICAL:
+headers = ["Question No", "Addition Problem", "Answer"]  → indices 0, 1, 2
+TOTAL must sum column index 2 = column C in Excel
+CORRECT: {"label":"TOTAL","col":2,"formula":"=IFERROR(SUM(C2:C101),0)"}
+WRONG:   {"label":"TOTAL","col":1,"formula":"=SUM(B2:B101)"}  ← sums wrong column!
+COUNT rows carefully before writing the formula range.
+
 RULE 3 — COPY ALL ROWS:
 If file has 50 rows → output must have 50 rows
 If file has 100 rows → output must have 100 rows
@@ -304,12 +315,26 @@ RULE 6 — SAFE FORMULAS ONLY:
 Always wrap VLOOKUP in IFERROR:
 =IFERROR(VLOOKUP(A2,Sheet2!$A:$B,2,FALSE),"Not Found")
 
+VLOOKUP ACROSS MULTIPLE SHEETS — use sheet name reference:
+=IFERROR(VLOOKUP(A2,Sheet2!$A:$D,3,FALSE),"Not Found")
+=IFERROR(VLOOKUP(A2,Summary!$A:$Z,2,FALSE),IFERROR(VLOOKUP(A2,Data!$A:$Z,2,FALSE),"Not Found"))
+
+For multiple sheet lookups, always create a Summary/Dashboard sheet that pulls data from all other sheets using VLOOKUP or INDEX/MATCH.
+
 Valid formulas:
 =SUM(B2:B10), =AVERAGE(B2:B10), =MAX(B2:B10), =MIN(B2:B10)
 =IF(B2>90,"A",IF(B2>80,"B",IF(B2>70,"C",IF(B2>60,"D","F"))))
 =COUNTIF(B2:B10,">100"), =SUMIF(A2:A10,"North",B2:B10)
 =RANK(B2,$B$2:$B$100,0), =TODAY(), =TEXT(A2,"DD-MMM-YYYY")
 =IFERROR(formula,"fallback")
+=INDEX(Sheet2!$B:$B,MATCH(A2,Sheet2!$A:$A,0))
+
+RULE 6B — NEVER #VALUE!:
+- Answer/result columns MUST contain integers or floats, NEVER strings
+- SUM formula range must NEVER include header row (start from row 2)
+- ALL summary formulas must be wrapped in IFERROR(...,0)
+- TOTAL row formula for column C with 100 data rows: =IFERROR(SUM(C2:C101),0)
+- Double-check every formula range matches actual data rows
 
 RULE 7 — MULTIPLE SHEETS WHEN HELPFUL:
 For complex data, create:
@@ -337,7 +362,14 @@ Every spreadsheet must look like it was made by a professional consultant.
 Add summary rows at the bottom.
 Add a totals/averages row.
 Use meaningful sheet names.
-Include metadata."""
+Include metadata.
+
+RULE 12 — SUMMARY ROWS COLUMN INDEX:
+summary_rows "col" is 0-indexed matching the headers array.
+EXAMPLE: headers = ["Question No", "Addition Problem", "Answer"]
+To SUM the "Answer" column (index 2): {"label":"TOTAL","col":2,"formula":"=SUM(C2:C101)"}
+NEVER use col=1 to sum column C. Count carefully from 0.
+formula must reference the CORRECT Excel column letter."""
 
 
 # ══════════════════════════════════════════════════════
@@ -461,7 +493,7 @@ Return only JSON."""
             "content": f"""I uploaded a {file_type} file. Analyze it and create the perfect professional Excel output.
 
 FILE CONTENT (process ALL rows, do not skip any):
-{file_content[:8000]}
+{file_content[:15000]}
 
 Instructions:
 - Understand exactly what this data is about
@@ -479,7 +511,7 @@ Instructions:
 
 FILE TYPE: {file_type}
 FILE CONTENT (use ALL rows, do not skip any):
-{file_content[:8000]}
+{file_content[:15000]}
 
 IMPORTANT:
 - Use every single row from the file
@@ -666,11 +698,20 @@ def build_excel(data: dict, output_path: str, password: str = None):
             for c in range(1, col_idx):
                 lc = ws.cell(row=next_row, column=c, value=label if c == 1 else None)
                 style_summary(lc)
-            # Value cell
+            # Value cell — wrap in IFERROR to prevent #VALUE! errors
             if formula:
-                val_cell = ws.cell(row=next_row, column=col_idx, value=formula)
+                # Ensure formula starts with =
+                f = formula if formula.startswith('=') else f'={formula}'
+                # Wrap in IFERROR so #VALUE! never shows
+                safe_formula = f'=IFERROR({f[1:]},0)'
+                val_cell = ws.cell(row=next_row, column=col_idx, value=safe_formula)
             else:
-                val_cell = ws.cell(row=next_row, column=col_idx, value=0)
+                # Auto-generate a safe SUM for this column
+                data_start = 2
+                data_end = len(rows) + 1
+                col_letter = get_column_letter(col_idx)
+                val_cell = ws.cell(row=next_row, column=col_idx,
+                                   value=f'=IFERROR(SUM({col_letter}{data_start}:{col_letter}{data_end}),0)')
             style_summary(val_cell)
             # Style remaining cells in row
             for c in range(col_idx + 1, len(headers) + 1):
@@ -952,7 +993,7 @@ async def generate_excel(
     if all_files:
         # Merge content from all files
         contents = []
-        for uf in all_files[:5]:  # max 5 files
+        for uf in all_files[:20]:  # max 20 files
             fc, ft, img, raw = await read_any_file(uf)
             if img:
                 image_data = img  # use last image
