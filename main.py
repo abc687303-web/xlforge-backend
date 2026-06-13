@@ -43,6 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Storage directories
 STORAGE_DIR = Path("storage")
 INPUT_DIR = STORAGE_DIR / "input"
 OUTPUT_DIR = STORAGE_DIR / "output"
@@ -50,12 +51,13 @@ TEMP_DIR = STORAGE_DIR / "temp"
 for d in [INPUT_DIR, OUTPUT_DIR, TEMP_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-conversation_memory: dict = {}
-rate_limit_store: dict = {}
-jobs: dict = {}
+# In-memory stores
+conversation_memory: dict = {}   # session_id → list of messages
+rate_limit_store: dict = {}      # ip → [timestamps]
+jobs: dict = {}                  # job_id → status dict
 
-MAX_FILE_SIZE = 20 * 1024 * 1024
-RATE_LIMIT = 15
+MAX_FILE_SIZE = 20 * 1024 * 1024   # 20MB
+RATE_LIMIT = 15                     # requests per minute
 FILE_EXPIRY_HOURS = 24
 
 
@@ -103,6 +105,7 @@ def init_db():
             created_at TEXT
         );
     """)
+    # Seed default templates
     existing = conn.execute("SELECT COUNT(*) FROM templates").fetchone()[0]
     if existing == 0:
         templates = [
@@ -114,9 +117,9 @@ def init_db():
             ("Project Timeline", "management", "Create a project timeline/gantt-style sheet with task name, owner, start date, end date, duration days, status (Not Started/In Progress/Complete), priority, dependencies, completion %", "📅"),
             ("Student Gradebook", "education", "Create a student gradebook with student name, roll number, 6 subjects scores, total, percentage, grade (A/B/C/D/F), rank, pass/fail status and class average row", "🎓"),
             ("Expense Report", "finance", "Create a business expense report with date, category, description, amount, receipt number, payment method, reimbursable yes/no, approval status, and monthly totals", "💳"),
-            ("KPI Dashboard", "management", "Create a KPI dashboard with metrics (Revenue, Customers, Conversion Rate, Avg Order Value, Churn Rate, NPS), current value, previous period, target, variance, trend, and status", "📊"),
-            ("Quotation", "sales", "Create a business quotation template with client details, quote number, validity date, itemized list (item, specs, qty, unit price, discount, net price), terms and conditions, total, and signature section", "📋"),
-            ("BOQ", "construction", "Create a BOQ sheet with item number, description of work, unit, quantity, rate, amount, GST %, GST amount, total amount, section subtotals and grand total", "🏗️"),
+            ("KPI Dashboard", "management", "Create a KPI dashboard with metrics (Revenue, Customers, Conversion Rate, Avg Order Value, Churn Rate, NPS), current value, previous period, target, variance, trend (↑↓), and status (On Track/At Risk/Behind)", "📊"),
+            ("Quotation", "sales", "Create a business quotation template with client details, quote number, validity date, itemized list (item, specs, qty, unit price, discount, net price), terms & conditions, total, and signature section", "📋"),
+            ("BOQ (Bill of Quantities)", "construction", "Create a BOQ sheet with item number, description of work, unit, quantity, rate, amount, GST %, GST amount, total amount, section subtotals and grand total", "🏗️"),
             ("Payroll Sheet", "HR", "Create a monthly payroll sheet with employee ID, name, designation, basic salary, HRA, DA, other allowances, gross salary, PF deduction, ESI, tax, total deductions, net salary", "💵"),
         ]
         conn.executemany(
@@ -252,26 +255,88 @@ JSON FORMAT:
   }
 }
 
-ABSOLUTE RULES:
+══════════════════════════════
+ABSOLUTE RULES — NEVER BREAK:
+══════════════════════════════
 
-RULE 1: Read every single row. Complete ALL missing values. Never replace file data with fake data.
-RULE 2: Solve everything - math problems, blank answers, missing totals, grades, status columns.
-RULE 3: Copy ALL rows. Never reduce row count.
-RULE 4: Auto-understand mode - add value beyond original file always.
-RULE 5: Numbers must be integers or floats, never strings.
-RULE 6: Use safe formulas only. Always wrap VLOOKUP in IFERROR.
-RULE 7: Create multiple sheets when helpful - raw data, summary, charts.
-RULE 8: Include charts for comparative or trend data.
-RULE 9: Add conditional formatting on numeric ranges.
-RULE 10: Never use placeholders like val1, col1, item1, data1, name1.
-RULE 11: Every spreadsheet must look professional. Add summary rows. Use meaningful sheet names."""
+RULE 1 — UNDERSTAND THE FILE COMPLETELY:
+- Read every single row without skipping
+- Understand exactly what kind of data it contains
+- Complete ALL missing values intelligently
+- Never replace file data with fake generated data
+
+RULE 2 — SOLVE EVERYTHING:
+Math problems → compute exact answers
+Questions with blanks → fill correct answers
+Missing totals → calculate them
+Empty grade columns → compute grades A/B/C/D/F
+Blank status columns → determine correct status
+Answer/Result columns → COMPUTED VALUES not formulas
+
+RULE 3 — COPY ALL ROWS:
+If file has 50 rows → output must have 50 rows
+If file has 100 rows → output must have 100 rows
+NEVER reduce rows
+
+RULE 4 — AUTO-UNDERSTAND MODE:
+Math problems → solve all, add Answer column
+Student marks → add Total, Average, Grade, Pass/Fail, Rank
+Financial data → add totals, summaries, trends, chart
+Inventory → add Stock Status, Reorder Alert, Value
+Employee data → add summaries, department totals
+Survey data → add analysis, counts, percentages
+Always add value beyond original file
+
+RULE 5 — REAL NUMBERS:
+Prices, salaries, scores → integers or floats, NEVER strings
+BAD: ["John", "50000"]
+GOOD: ["John", 50000]
+
+RULE 6 — SAFE FORMULAS ONLY:
+Always wrap VLOOKUP in IFERROR:
+=IFERROR(VLOOKUP(A2,Sheet2!$A:$B,2,FALSE),"Not Found")
+
+Valid formulas:
+=SUM(B2:B10), =AVERAGE(B2:B10), =MAX(B2:B10), =MIN(B2:B10)
+=IF(B2>90,"A",IF(B2>80,"B",IF(B2>70,"C",IF(B2>60,"D","F"))))
+=COUNTIF(B2:B10,">100"), =SUMIF(A2:A10,"North",B2:B10)
+=RANK(B2,$B$2:$B$100,0), =TODAY(), =TEXT(A2,"DD-MMM-YYYY")
+=IFERROR(formula,"fallback")
+
+RULE 7 — MULTIPLE SHEETS WHEN HELPFUL:
+For complex data, create:
+Sheet 1: Raw data / main table
+Sheet 2: Summary / dashboard
+Sheet 3: Charts data
+
+RULE 8 — CHARTS:
+type options: "bar", "line", "pie", "area"
+data_cols: list of 0-indexed number columns
+category_col: 0-indexed label column
+Always include chart for comparative or trend data
+
+RULE 9 — CONDITIONAL FORMATTING:
+"colorscale" → red-yellow-green gradient on numeric ranges
+"databar" → blue progress bars
+"highlight_high" → green for above threshold
+
+RULE 10 — NO PLACEHOLDERS EVER:
+Never: val1, col1, value1, header1, item1, data1, sample, name1
+Always use real, meaningful data
+
+RULE 11 — PROFESSIONAL QUALITY:
+Every spreadsheet must look like it was made by a professional consultant.
+Add summary rows at the bottom.
+Add a totals/averages row.
+Use meaningful sheet names.
+Include metadata."""
 
 
 # ══════════════════════════════════════════════════════
 # VALIDATION LAYER
 # ══════════════════════════════════════════════════════
 
-def validate_ai_response(data: dict) -> tuple:
+def validate_ai_response(data: dict) -> tuple[bool, str]:
     if not isinstance(data, dict):
         return False, "Response is not a dict"
     if "sheets" not in data:
@@ -291,10 +356,25 @@ def validate_ai_response(data: dict) -> tuple:
         for j, row in enumerate(sheet["rows"]):
             if not isinstance(row, list):
                 return False, f"Sheet {i}, Row {j}: must be a list"
+            # Pad short rows
             while len(row) < header_len:
                 row.append("")
     return True, "OK"
 
+
+def coerce_numeric(val):
+    """Convert string numbers to int/float so Excel SUM/formulas work correctly."""
+    if isinstance(val, (int, float)):
+        return val
+    if isinstance(val, str):
+        v = val.strip()
+        try:
+            if '.' in v:
+                return float(v)
+            return int(v)
+        except (ValueError, TypeError):
+            pass
+    return val
 
 def sanitize_ai_response(data: dict) -> dict:
     for sheet in data.get("sheets", []):
@@ -305,17 +385,21 @@ def sanitize_ai_response(data: dict) -> dict:
                 row = row[:header_len]
                 while len(row) < header_len:
                     row.append("")
+                # Coerce numeric strings → real numbers so SUM/formulas work
+                row = [coerce_numeric(v) for v in row]
                 cleaned_rows.append(row)
         sheet["rows"] = cleaned_rows
         if not sheet.get("formulas"):
             sheet["formulas"] = []
         if not sheet.get("conditional_formatting"):
             sheet["conditional_formatting"] = []
+        if not sheet.get("summary_rows"):
+            sheet["summary_rows"] = []
     return data
 
 
 # ══════════════════════════════════════════════════════
-# AI CALL
+# AI CALL (GROQ)
 # ══════════════════════════════════════════════════════
 
 async def call_groq(
@@ -328,10 +412,12 @@ async def call_groq(
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
+    # Inject conversation history
     if session_id and session_id in conversation_memory:
-        history = conversation_memory[session_id][-6:]
+        history = conversation_memory[session_id][-6:]  # last 3 exchanges
         messages.extend(history)
 
+    # Build user message
     if image_data:
         messages.append({
             "role": "user",
@@ -356,7 +442,7 @@ Return only JSON."""
             "content": f"""I uploaded a {file_type} file. Analyze it and create the perfect professional Excel output.
 
 FILE CONTENT (process ALL rows, do not skip any):
-{file_content[:5000]}
+{file_content[:8000]}
 
 Instructions:
 - Understand exactly what this data is about
@@ -374,7 +460,7 @@ Instructions:
 
 FILE TYPE: {file_type}
 FILE CONTENT (use ALL rows, do not skip any):
-{file_content[:5000]}
+{file_content[:8000]}
 
 IMPORTANT:
 - Use every single row from the file
@@ -387,7 +473,7 @@ IMPORTANT:
         messages.append({
             "role": "user",
             "content": f"""Create a professional Excel spreadsheet: "{prompt}"
-- Real, meaningful data, minimum 15 rows
+- Real, meaningful data — minimum 15 rows
 - Multiple sheets if it makes sense
 - Professional formulas throughout
 - Add chart if data is comparative or trending
@@ -412,7 +498,7 @@ IMPORTANT:
                     },
                     json={
                         "model": model,
-                        "max_tokens": 4000,
+                        "max_tokens": 8000,
                         "temperature": temperature,
                         "messages": messages
                     }
@@ -442,30 +528,36 @@ IMPORTANT:
 
             data = sanitize_ai_response(data)
 
+            # Save to conversation memory
             if session_id:
                 user_msg = {"role": "user", "content": prompt or f"[{file_type} file uploaded]"}
                 assistant_msg = {"role": "assistant", "content": f"[Generated Excel with {len(data['sheets'])} sheet(s)]"}
                 if session_id not in conversation_memory:
                     conversation_memory[session_id] = []
                 conversation_memory[session_id].extend([user_msg, assistant_msg])
-                conversation_memory[session_id] = conversation_memory[session_id][-20:]
+                conversation_memory[session_id] = conversation_memory[session_id][-20:]  # keep last 10 exchanges
 
             return data
 
         except json.JSONDecodeError as e:
             last_error = f"JSON parse error: {e}"
+            logger.warning(f"Attempt {attempt+1} JSON error: {e}")
             continue
         except ValueError as e:
             last_error = str(e)
+            logger.warning(f"Attempt {attempt+1} value error: {e}")
             continue
         except httpx.TimeoutException:
             last_error = "AI service timed out"
+            logger.warning(f"Attempt {attempt+1} timeout")
             continue
         except Exception as e:
             last_error = str(e)
+            logger.error(f"Attempt {attempt+1} unexpected error: {e}")
             continue
 
     raise ValueError(f"AI generation failed after 4 attempts. Last error: {last_error}")
+
 
 # ══════════════════════════════════════════════════════
 # EXCEL BUILDER
@@ -506,7 +598,7 @@ def build_excel(data: dict, output_path: str, password: str = None):
             if any(k in h for k in ["salary","revenue","price","cost","amount","budget",
                                       "sales","income","expense","pay","total","value","rate"]):
                 cell.number_format = '#,##0.00'
-            elif any(k in h for k in ["percent","%","growth","margin","achievement"]):
+            elif any(k in h for k in ["percent","%","rate","growth","margin","achievement"]):
                 cell.number_format = '0.00'
 
     def style_summary(cell):
@@ -519,21 +611,24 @@ def build_excel(data: dict, output_path: str, password: str = None):
         name = str(sheet_def.get("name", "Sheet"))[:31]
         ws = wb.create_sheet(title=name)
 
-        headers = sheet_def.get("headers", [])
-        rows = sheet_def.get("rows", [])
+        headers  = sheet_def.get("headers", [])
+        rows     = sheet_def.get("rows", [])
         formulas = sheet_def.get("formulas", [])
         cf_rules = sheet_def.get("conditional_formatting", [])
         chart_def = sheet_def.get("chart", None)
         summary_rows = sheet_def.get("summary_rows", [])
 
+        # ── Tab color
         ws.sheet_properties.tabColor = BLUE
 
+        # ── Write headers
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=str(header))
             style_header(cell)
             ws.column_dimensions[get_column_letter(col)].width = max(len(str(header)) + 6, 18)
         ws.row_dimensions[1].height = 32
 
+        # ── Write data rows
         for row_idx, row in enumerate(rows, 2):
             for col_idx, val in enumerate(row, 1):
                 header = headers[col_idx-1] if col_idx <= len(headers) else ""
@@ -541,17 +636,29 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 style_data(cell, row_idx, header)
             ws.row_dimensions[row_idx].height = 20
 
+        # ── Summary rows at bottom
         next_row = len(rows) + 2
         for sr in summary_rows:
             label = sr.get("label", "TOTAL")
-            col_idx = sr.get("col", 1) + 1
+            # AI sends 0-indexed col; convert to 1-indexed for openpyxl
+            col_idx = int(sr.get("col", 1)) + 1
             formula = sr.get("formula", "")
-            label_cell = ws.cell(row=next_row, column=col_idx - 1, value=label)
-            style_summary(label_cell)
-            val_cell = ws.cell(row=next_row, column=col_idx, value=formula if formula else 0)
+            # Fill label across all columns up to value col with merged-style look
+            for c in range(1, col_idx):
+                lc = ws.cell(row=next_row, column=c, value=label if c == 1 else None)
+                style_summary(lc)
+            # Value cell
+            if formula:
+                val_cell = ws.cell(row=next_row, column=col_idx, value=formula)
+            else:
+                val_cell = ws.cell(row=next_row, column=col_idx, value=0)
             style_summary(val_cell)
+            # Style remaining cells in row
+            for c in range(col_idx + 1, len(headers) + 1):
+                style_summary(ws.cell(row=next_row, column=c))
             next_row += 1
 
+        # ── Inline formulas
         for f in formulas:
             addr = f.get("cell", "")
             formula = f.get("formula", "")
@@ -572,14 +679,18 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 except:
                     pass
 
+        # ── Freeze panes & auto-filter
         ws.freeze_panes = "A2"
         if headers:
             last_data_row = len(rows) + 1
             ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{last_data_row}"
 
+        # ── Print settings
         ws.page_setup.fitToPage = True
         ws.page_setup.fitToWidth = 1
+        ws.sheet_view.showGridLines = True
 
+        # ── Conditional formatting
         for cf in cf_rules:
             r = cf.get("range", "")
             t = cf.get("type", "")
@@ -588,14 +699,14 @@ def build_excel(data: dict, output_path: str, password: str = None):
             try:
                 if t == "colorscale":
                     ws.conditional_formatting.add(r, ColorScaleRule(
-                        start_type="min", start_color="F87171",
+                        start_type="min",  start_color="F87171",
                         mid_type="percentile", mid_value=50, mid_color="FCD34D",
-                        end_type="max", end_color="4ADE80"
+                        end_type="max",    end_color="4ADE80"
                     ))
                 elif t == "databar":
                     ws.conditional_formatting.add(r, DataBarRule(
                         start_type="min", start_value=0,
-                        end_type="max", end_value=100,
+                        end_type="max",   end_value=100,
                         color="2563EB"
                     ))
                 elif t == "highlight_high":
@@ -625,25 +736,26 @@ def build_excel(data: dict, output_path: str, password: str = None):
             except Exception as e:
                 logger.warning(f"CF error: {e}")
 
+        # ── Chart
         if chart_def:
             try:
-                ctype = chart_def.get("type", "bar")
-                dcols = chart_def.get("data_cols", [1])
+                ctype  = chart_def.get("type", "bar")
+                dcols  = chart_def.get("data_cols", [1])
                 catcol = chart_def.get("category_col", 0)
                 ctitle = chart_def.get("title", "Chart")
-                nrows = len(rows)
+                nrows  = len(rows)
 
                 chart_map = {
-                    "pie": PieChart(),
+                    "pie":  PieChart(),
                     "line": LineChart(),
                     "area": AreaChart(),
-                    "bar": BarChart()
+                    "bar":  BarChart()
                 }
                 chart = chart_map.get(ctype, BarChart())
-                chart.title = ctitle
-                chart.style = 10
+                chart.title  = ctitle
+                chart.style  = 10
                 chart.height = 15
-                chart.width = 28
+                chart.width  = 28
 
                 if ctype == "bar":
                     chart.type = "col"
@@ -734,7 +846,7 @@ async def process_job(
         """, (job_id, session_id, ai_ms, excel_ms, datetime.utcnow().isoformat()))
         conn.commit()
 
-        logger.info(f"Job {job_id} done in {total_ms}ms (AI:{ai_ms}ms Excel:{excel_ms}ms)")
+        logger.info(f"Job {job_id} done in {total_ms}ms (AI:{ai_ms}ms, Excel:{excel_ms}ms)")
 
     except Exception as e:
         jobs[job_id].update({"status": "failed", "error": str(e)})
@@ -747,8 +859,10 @@ async def process_job(
         logger.error(f"Job {job_id} failed: {e}")
     finally:
         conn.close()
-        # ══════════════════════════════════════════════════════
-# FILE CLEANUP
+
+
+# ══════════════════════════════════════════════════════
+# FILE CLEANUP (run periodically)
 # ══════════════════════════════════════════════════════
 
 def cleanup_old_files():
@@ -785,6 +899,7 @@ def health():
     }
 
 
+# ── MAIN GENERATE ENDPOINT (async job)
 @app.post("/generate")
 async def generate_excel(
     background_tasks: BackgroundTasks,
@@ -806,6 +921,7 @@ async def generate_excel(
     job_id = str(uuid.uuid4())
     output_path = str(OUTPUT_DIR / f"{job_id}.xlsx")
 
+    # Handle single or multiple files
     all_files = [f for f in (files or []) if f and f.filename]
     if file and file.filename:
         all_files.insert(0, file)
@@ -815,21 +931,24 @@ async def generate_excel(
     image_data = None
 
     if all_files:
+        # Merge content from all files
         contents = []
-        for uf in all_files[:5]:
+        for uf in all_files[:5]:  # max 5 files
             fc, ft, img, raw = await read_any_file(uf)
             if img:
-                image_data = img
+                image_data = img  # use last image
             elif fc:
                 contents.append(f"[File: {uf.filename}]\n{fc}")
             file_type = ft
 
+            # Save input file
             input_path = INPUT_DIR / f"{job_id}_{uf.filename}"
             with open(input_path, "wb") as f_out:
                 f_out.write(raw)
 
         file_content = "\n\n".join(contents)
 
+    # Create job record
     jobs[job_id] = {
         "status": "pending",
         "job_id": job_id,
@@ -870,6 +989,7 @@ async def generate_excel(
     }
 
 
+# ── STATUS CHECK
 @app.get("/status/{job_id}")
 def job_status(job_id: str):
     job = jobs.get(job_id)
@@ -883,6 +1003,7 @@ def job_status(job_id: str):
     return job
 
 
+# ── DOWNLOAD EXCEL
 @app.get("/download/{job_id}")
 def download_excel(job_id: str):
     job = jobs.get(job_id)
@@ -900,6 +1021,7 @@ def download_excel(job_id: str):
     )
 
 
+# ── DOWNLOAD AS CSV
 @app.get("/download-csv/{job_id}")
 def download_csv(job_id: str):
     job = jobs.get(job_id)
@@ -918,6 +1040,7 @@ def download_csv(job_id: str):
     )
 
 
+# ── SYNC GENERATE (for simple/quick requests, backwards compatible)
 @app.post("/generate-sync")
 async def generate_sync(
     request: Request,
@@ -958,6 +1081,7 @@ async def generate_sync(
     )
 
 
+# ── TEMPLATES
 @app.get("/templates")
 def get_templates(category: str = None):
     conn = get_db()
@@ -1020,6 +1144,7 @@ async def use_template(
             "template": tmpl["name"]}
 
 
+# ── CONVERSATION / SESSION
 @app.get("/session/{session_id}/history")
 def get_session_history(session_id: str):
     history = conversation_memory.get(session_id, [])
@@ -1042,6 +1167,7 @@ def clear_session(session_id: str):
     return {"message": "Session cleared", "session_id": session_id}
 
 
+# ── JOB HISTORY
 @app.get("/history")
 def get_history(limit: int = 20):
     conn = get_db()
@@ -1053,6 +1179,7 @@ def get_history(limit: int = 20):
     return {"jobs": [dict(r) for r in rows]}
 
 
+# ── EMAIL ENDPOINT
 @app.post("/email/{job_id}")
 async def email_file(job_id: str, to_email: str = Form(...), subject: str = Form(default="Your Excel File from XLforge")):
     job = jobs.get(job_id)
@@ -1092,6 +1219,7 @@ async def email_file(job_id: str, to_email: str = Form(...), subject: str = Form
         raise HTTPException(status_code=500, detail=f"Email failed: {str(e)}")
 
 
+# ── STATS / MONITORING
 @app.get("/stats")
 def get_stats():
     conn = get_db()
@@ -1115,12 +1243,14 @@ def get_stats():
     }
 
 
+# ── CLEANUP ENDPOINT
 @app.post("/admin/cleanup")
 def run_cleanup():
     cleanup_old_files()
     return {"message": "Cleanup complete"}
 
 
+# ── LIST ACTIVE JOBS
 @app.get("/jobs")
 def list_jobs():
     return {
