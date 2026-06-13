@@ -490,18 +490,20 @@ Return only JSON."""
     elif file_content and not prompt.strip():
         messages.append({
             "role": "user",
-            "content": f"""I uploaded a {file_type} file. Analyze it and create the perfect professional Excel output.
+            "content": f"""I uploaded a {file_type} file. Carefully read EVERY row and understand what this file is about, then create a perfect professional Excel output.
 
 FILE CONTENT (process ALL rows, do not skip any):
 {file_content[:15000]}
 
-Instructions:
-- Understand exactly what this data is about
-- Complete every missing value intelligently
-- Solve every math problem if present
-- Add professional formulas and charts
-- Copy ALL rows without skipping any
-- Add summary/totals rows at the bottom
+CRITICAL INSTRUCTIONS:
+- Read the file and understand its purpose automatically
+- If it contains math problems (like "123 + 456"), solve ALL of them and put integer answers
+- If it contains student marks, add Grade, Total, Rank, Pass/Fail
+- If it contains inventory, add Stock Status, Value, Reorder Alert
+- If it contains names/data with blanks, fill them intelligently
+- Copy EVERY SINGLE ROW without skipping — if 100 rows in file, output 100 rows
+- Add professional formulas, charts, conditional formatting
+- Add TOTAL/AVERAGE/SUMMARY rows at the bottom
 - Return only JSON"""
         })
     elif file_content and prompt.strip():
@@ -535,10 +537,23 @@ IMPORTANT:
         })
 
     last_error = None
+    TEXT_MODELS = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-70b-versatile",
+        "llama3-70b-8192",
+        "llama3-8b-8192",
+    ]
+    IMAGE_MODELS = [
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "meta-llama/llama-4-maverick-17b-128e-instruct",
+    ]
     for attempt in range(4):
         try:
             temperature = [0.1, 0.2, 0.35, 0.5][attempt]
-            model = "meta-llama/llama-4-scout-17b-16e-instruct" if image_data else "llama-3.3-70b-versatile"
+            if image_data:
+                model = IMAGE_MODELS[min(attempt, len(IMAGE_MODELS)-1)]
+            else:
+                model = TEXT_MODELS[min(attempt, len(TEXT_MODELS)-1)]
 
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
@@ -555,6 +570,10 @@ IMPORTANT:
                     }
                 )
 
+            if response.status_code == 429:
+                logger.warning(f"Rate limit on {model}, trying next model...")
+                last_error = f"Rate limit on {model}"
+                continue
             if response.status_code != 200:
                 raise ValueError(f"Groq HTTP {response.status_code}: {response.text[:200]}")
 
