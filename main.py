@@ -1,11 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-import anthropic
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment
-import os
-import uuid
+import os, uuid, httpx
 
 app = FastAPI()
 
@@ -19,26 +17,24 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    return {"status":"XLforge backend running!"}
-
-@app.options("/generate")
-def options_generate():
-    return JSONResponse(content={}, headers={
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-    })
+    return {"status": "XLforge backend running!"}
 
 @app.post("/generate")
 async def generate_excel(prompt: str = Form(...)):
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     job_id = str(uuid.uuid4())
     output_path = f"/tmp/{job_id}.xlsx"
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2000,
-        messages=[{"role":"user","content":f"""Generate Python code using openpyxl to create an Excel file.
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "max_tokens": 2000,
+                "messages": [{"role": "user", "content": f"""Generate Python code using openpyxl to create an Excel file.
 Save the file to: {output_path}
 Request: {prompt}
 
@@ -48,9 +44,10 @@ Rules:
 - Add sample data rows
 - Make it look professional
 - Return ONLY Python code, no markdown, no explanation"""}]
-    )
+            }
+        )
 
-    code = message.content[0].text
+    code = response.json()["choices"][0]["message"]["content"]
     if "```" in code:
         parts = code.split("```")
         for part in parts:
@@ -75,5 +72,5 @@ Rules:
         output_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename="xlforge_output.xlsx",
-        headers={"Access-Control-Allow-Origin":"*"}
+        headers={"Access-Control-Allow-Origin": "*"}
     )
