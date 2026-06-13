@@ -687,35 +687,31 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 style_data(cell, row_idx, header)
             ws.row_dimensions[row_idx].height = 20
 
-        # ── Summary rows at bottom
+        # ── Summary rows at bottom — AUTO-GENERATED, never trust AI col index
         next_row = len(rows) + 2
-        for sr in summary_rows:
-            label = sr.get("label", "TOTAL")
-            # AI sends 0-indexed col; convert to 1-indexed for openpyxl
-            col_idx = int(sr.get("col", 1)) + 1
-            formula = sr.get("formula", "")
-            # Fill label across all columns up to value col with merged-style look
-            for c in range(1, col_idx):
-                lc = ws.cell(row=next_row, column=c, value=label if c == 1 else None)
-                style_summary(lc)
-            # Value cell — wrap in IFERROR to prevent #VALUE! errors
-            if formula:
-                # Ensure formula starts with =
-                f = formula if formula.startswith('=') else f'={formula}'
-                # Wrap in IFERROR so #VALUE! never shows
-                safe_formula = f'=IFERROR({f[1:]},0)'
-                val_cell = ws.cell(row=next_row, column=col_idx, value=safe_formula)
-            else:
-                # Auto-generate a safe SUM for this column
-                data_start = 2
-                data_end = len(rows) + 1
-                col_letter = get_column_letter(col_idx)
-                val_cell = ws.cell(row=next_row, column=col_idx,
-                                   value=f'=IFERROR(SUM({col_letter}{data_start}:{col_letter}{data_end}),0)')
-            style_summary(val_cell)
-            # Style remaining cells in row
-            for c in range(col_idx + 1, len(headers) + 1):
-                style_summary(ws.cell(row=next_row, column=c))
+        data_start_row = 2
+        data_end_row = len(rows) + 1
+
+        # Detect which columns are numeric by checking actual data
+        numeric_cols = set()
+        for row in rows:
+            for ci, val in enumerate(row):
+                if isinstance(val, (int, float)):
+                    numeric_cols.add(ci)  # 0-indexed
+
+        # Write TOTAL row if there are numeric columns
+        if numeric_cols:
+            # Label in first cell
+            label_cell = ws.cell(row=next_row, column=1, value="TOTAL")
+            style_summary(label_cell)
+            for col_0idx in range(len(headers)):
+                cell = ws.cell(row=next_row, column=col_0idx + 1)
+                if col_0idx in numeric_cols:
+                    col_letter = get_column_letter(col_0idx + 1)
+                    cell.value = f'=IFERROR(SUM({col_letter}{data_start_row}:{col_letter}{data_end_row}),0)'
+                elif col_0idx > 0:
+                    cell.value = None
+                style_summary(cell)
             next_row += 1
 
         # ── Inline formulas
