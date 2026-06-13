@@ -278,12 +278,19 @@ Blank status columns → determine correct status
 Answer/Result columns → COMPUTED VALUES not formulas
 
 ADDITION EXAMPLE — if file has "1021 + 707" in column B and blank Answer in column C:
-BAD row:  [1, "1021 + 707", "1728"]   ← string answer, WRONG
-GOOD row: [1, "1021 + 707", 1728]     ← integer answer, CORRECT
-You MUST evaluate every math expression and put the INTEGER result, never a string.
+WRONG row: [1, "1021 + 707", "1728"]   ← "1728" is a string, WRONG
+WRONG row: [1, 1728, 1728]             ← problem text became number, WRONG — destroys the question!
+CORRECT:   [1, "1021 + 707", 1728]     ← problem text stays as-is, answer is integer, CORRECT
+
+CRITICAL RULE FOR PROBLEM/QUESTION COLUMNS:
+- The "Problem" or "Question" column text like "1021 + 707" MUST stay as a STRING exactly as it was
+- NEVER evaluate or replace the problem text with a number
+- ONLY the "Answer" or "Result" column gets the computed integer value
+- Keep original text in problem column, put solved integer in answer column
 
 IF the Answer/Result column already has values, VERIFY them and correct wrong ones.
-ALWAYS output answers as integers or floats, NEVER as strings.
+ALWAYS output answers as integers or floats in the ANSWER column, NEVER as strings.
+NEVER put a number in the PROBLEM/QUESTION column — keep it as the original text.
 
 SUMMARY ROW RULE — CRITICAL:
 headers = ["Question No", "Addition Problem", "Answer"]  → indices 0, 1, 2
@@ -403,27 +410,36 @@ def validate_ai_response(data: dict) -> tuple[bool, str]:
 
 
 def coerce_numeric(val):
-    """Convert string numbers or math expressions to int/float."""
+    """Convert plain numeric strings to int/float.
+    CRITICAL: Do NOT eval math expressions like '1021 + 707'.
+    Those are question/problem text — they must stay as strings in Excel.
+    Only convert pure number strings: '125' -> 125, '3.14' -> 3.14, '-50' -> -50."""
     if isinstance(val, (int, float)):
         return val
     if isinstance(val, str):
         v = val.strip()
-        # Try direct int/float conversion first
-        try:
-            if '.' in v:
-                return float(v)
-            return int(v)
-        except (ValueError, TypeError):
-            pass
-        # Try evaluating simple math expressions like "1021 + 707", "50 * 3"
-        # Only allow safe characters: digits, spaces, +, -, *, /, (, ), .
-        if re.match(r'^[\d\s\+\*\/\(\)\.−-]+$', v):
+        if not v:
+            return val
+        # Never touch Excel formulas
+        if v.startswith('='):
+            return val
+        # Only convert if it is a plain number: digits, optional leading minus, optional decimal.
+        # Rejects anything with spaces or operators (+, *, /, etc.) — those are text data.
+        if re.match(r'^-?[\d]+(\.[\d]+)?$', v):
             try:
-                result = eval(v)
-                if isinstance(result, float) and result.is_integer():
-                    return int(result)
-                return result
-            except Exception:
+                if '.' in v:
+                    return float(v)
+                return int(v)
+            except (ValueError, TypeError):
+                pass
+        # Also accept numbers with thousand-commas like "1,234" or "1,234.56"
+        if re.match(r'^-?[\d]{1,3}(,[\d]{3})*(\.[\d]+)?$', v):
+            try:
+                cleaned = v.replace(',', '')
+                if '.' in cleaned:
+                    return float(cleaned)
+                return int(cleaned)
+            except (ValueError, TypeError):
                 pass
     return val
 
@@ -537,21 +553,29 @@ IMPORTANT:
         })
 
     last_error = None
+    # Only models confirmed active on Groq as of 2025 — dead models removed:
     TEXT_MODELS = [
         "llama-3.3-70b-versatile",
-        "llama-3.1-70b-versatile",
-        "llama3-70b-8192",
-        "llama3-8b-8192",
+        "llama-3.1-8b-instant",
+        "gemma2-9b-it",
+        "llama-3.3-70b-versatile",  # retry best model with higher temperature
     ]
     IMAGE_MODELS = [
         "meta-llama/llama-4-scout-17b-16e-instruct",
         "meta-llama/llama-4-maverick-17b-128e-instruct",
+        "llama-3.3-70b-versatile",  # fallback if vision models fail
     ]
     for attempt in range(4):
         try:
             temperature = [0.1, 0.2, 0.35, 0.5][attempt]
             if image_data:
                 model = IMAGE_MODELS[min(attempt, len(IMAGE_MODELS)-1)]
+                # If falling back to a text-only model, strip the image payload
+                is_vision_model = "llama-4" in model
+                if not is_vision_model and isinstance(messages[-1]["content"], list):
+                    # Extract just the text part for text-only fallback
+                    text_parts = [p["text"] for p in messages[-1]["content"] if p.get("type") == "text"]
+                    messages[-1] = {"role": "user", "content": " ".join(text_parts)}
             else:
                 model = TEXT_MODELS[min(attempt, len(TEXT_MODELS)-1)]
 
@@ -573,6 +597,7 @@ IMPORTANT:
             if response.status_code == 429:
                 logger.warning(f"Rate limit on {model}, trying next model...")
                 last_error = f"Rate limit on {model}"
+                await asyncio.sleep(1)
                 continue
             if response.status_code != 200:
                 raise ValueError(f"Groq HTTP {response.status_code}: {response.text[:200]}")
@@ -586,9 +611,21 @@ IMPORTANT:
             text = re.sub(r"\n?```$", "", text)
             text = text.strip()
 
-            json_match = re.search(r'\{[\s\S]*\}', text)
-            if json_match:
-                text = json_match.group(0)
+            # Find the outermost valid JSON object (handle nested braces correctly)
+            brace_start = text.find('{')
+            if brace_start != -1:
+                depth = 0
+                brace_end = -1
+                for i, ch in enumerate(text[brace_start:], brace_start):
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            brace_end = i + 1
+                            break
+                if brace_end != -1:
+                    text = text[brace_start:brace_end]
 
             data = json.loads(text)
 
@@ -617,9 +654,10 @@ IMPORTANT:
             last_error = str(e)
             logger.warning(f"Attempt {attempt+1} value error: {e}")
             continue
-        except httpx.TimeoutException:
+        except (httpx.TimeoutException, httpx.ReadTimeout, httpx.ConnectTimeout):
             last_error = "AI service timed out"
-            logger.warning(f"Attempt {attempt+1} timeout")
+            logger.warning(f"Attempt {attempt+1} timeout on {model}")
+            await asyncio.sleep(2)
             continue
         except Exception as e:
             last_error = str(e)
@@ -706,6 +744,15 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 style_data(cell, row_idx, header)
             ws.row_dimensions[row_idx].height = 20
 
+        # ── Auto-fit column widths based on actual data content
+        for col_idx, header in enumerate(headers, 1):
+            max_len = len(str(header))
+            for row in rows:
+                if col_idx - 1 < len(row):
+                    cell_val = row[col_idx - 1]
+                    max_len = max(max_len, len(str(cell_val)) if cell_val is not None else 0)
+            ws.column_dimensions[get_column_letter(col_idx)].width = min(max(max_len + 4, 14), 60)
+
         # ── Summary rows at bottom — AUTO-GENERATED, never trust AI col index
         next_row = len(rows) + 2
         data_start_row = 2
@@ -720,15 +767,15 @@ def build_excel(data: dict, output_path: str, password: str = None):
 
         # Write TOTAL row if there are numeric columns
         if numeric_cols:
-            # Label in first cell
-            label_cell = ws.cell(row=next_row, column=1, value="TOTAL")
-            style_summary(label_cell)
             for col_0idx in range(len(headers)):
                 cell = ws.cell(row=next_row, column=col_0idx + 1)
-                if col_0idx in numeric_cols:
+                if col_0idx == 0:
+                    # First column always gets the "TOTAL" label — never a SUM
+                    cell.value = "TOTAL"
+                elif col_0idx in numeric_cols:
                     col_letter = get_column_letter(col_0idx + 1)
                     cell.value = f'=IFERROR(SUM({col_letter}{data_start_row}:{col_letter}{data_end_row}),0)'
-                elif col_0idx > 0:
+                else:
                     cell.value = None
                 style_summary(cell)
             next_row += 1
@@ -997,7 +1044,7 @@ async def generate_excel(
     output_path = str(OUTPUT_DIR / f"{job_id}.xlsx")
 
     # Handle single or multiple files
-    all_files = [f for f in (files or []) if f and f.filename]
+    all_files = [uf for uf in (files or []) if uf and uf.filename]
     if file and file.filename:
         all_files.insert(0, file)
 
@@ -1018,8 +1065,8 @@ async def generate_excel(
 
             # Save input file
             input_path = INPUT_DIR / f"{job_id}_{uf.filename}"
-            with open(input_path, "wb") as f_out:
-                f_out.write(raw)
+            with open(str(input_path), "wb") as fout:
+                fout.write(raw)
 
         file_content = "\n\n".join(contents)
 
