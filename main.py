@@ -266,12 +266,20 @@ RULE 1 — UNDERSTAND THE FILE COMPLETELY:
 - Never replace file data with fake generated data
 
 RULE 2 — SOLVE EVERYTHING:
-Math problems → compute exact answers
+Math problems → compute exact answers AS REAL INTEGERS/FLOATS
 Questions with blanks → fill correct answers
 Missing totals → calculate them
 Empty grade columns → compute grades A/B/C/D/F
 Blank status columns → determine correct status
 Answer/Result columns → COMPUTED VALUES not formulas
+
+ADDITION EXAMPLE — if file has "1021 + 707" in column B and blank Answer in column C:
+BAD row:  [1, "1021 + 707", "1728"]   ← string answer, WRONG
+GOOD row: [1, "1021 + 707", 1728]     ← integer answer, CORRECT
+You MUST evaluate every math expression and put the INTEGER result, never a string.
+
+IF the Answer/Result column already has values, VERIFY them and correct wrong ones.
+ALWAYS output answers as integers or floats, NEVER as strings.
 
 RULE 3 — COPY ALL ROWS:
 If file has 50 rows → output must have 50 rows
@@ -363,17 +371,28 @@ def validate_ai_response(data: dict) -> tuple[bool, str]:
 
 
 def coerce_numeric(val):
-    """Convert string numbers to int/float so Excel SUM/formulas work correctly."""
+    """Convert string numbers or math expressions to int/float."""
     if isinstance(val, (int, float)):
         return val
     if isinstance(val, str):
         v = val.strip()
+        # Try direct int/float conversion first
         try:
             if '.' in v:
                 return float(v)
             return int(v)
         except (ValueError, TypeError):
             pass
+        # Try evaluating simple math expressions like "1021 + 707", "50 * 3"
+        # Only allow safe characters: digits, spaces, +, -, *, /, (, ), .
+        if re.match(r'^[\d\s\+\*\/\(\)\.−-]+$', v):
+            try:
+                result = eval(v)
+                if isinstance(result, float) and result.is_integer():
+                    return int(result)
+                return result
+            except Exception:
+                pass
     return val
 
 def sanitize_ai_response(data: dict) -> dict:
