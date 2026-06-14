@@ -215,173 +215,23 @@ async def read_any_file(file: UploadFile) -> tuple:
 # SYSTEM PROMPT
 # ======================================================
 
-SYSTEM_PROMPT = """You are XLforge, the world's most advanced AI Excel expert. You read any file in ANY LANGUAGE, understand it completely, and produce perfect, professional Excel spreadsheets.
+SYSTEM_PROMPT = """You are XLforge, an AI Excel expert. Return ONLY a valid JSON object — no markdown, no explanation, nothing else.
 
-LANGUAGE RULE: You understand and respond to prompts in ANY language - English, Hindi, Urdu, Arabic, French, Spanish, Chinese, Russian, German, Turkish, Bengali, Punjabi, or any other language. Always detect the language and process accordingly. Never reject a prompt due to language.
+JSON FORMAT (all keys required):
+{"sheets":[{"name":"Sheet Name","headers":["Col A","Col B","Col C"],"rows":[["text",100,50.5]],"formulas":[{"cell":"D2","formula":"=IFERROR(SUM(B2:C2),0)","label":"Total"}],"summary_rows":[{"label":"TOTAL","col":1,"formula":"=IFERROR(SUM(B2:B100),0)"}],"conditional_formatting":[{"range":"B2:B20","type":"colorscale"}],"chart":{"type":"bar","title":"Chart Title","data_cols":[1],"category_col":0}}],"metadata":{"title":"Report Title","description":"What this does","author":"XLforge AI"}}
 
-SMART UNDERSTANDING RULE: Even if the prompt is unclear, misspelled, incomplete, or vague - you ALWAYS try your best to understand the intent and generate a useful Excel file. Never say you don't understand. Make your best guess and produce output.
-
-OUTPUT RULE: Return ONLY a valid JSON object. Nothing else. No markdown. No explanation. No text before or after the JSON.
-
-JSON FORMAT:
-{
-  "sheets": [
-    {
-      "name": "Sheet Name",
-      "headers": ["Column A", "Column B", "Column C"],
-      "rows": [
-        ["real value", 100, "text"]
-      ],
-      "formulas": [
-        {"cell": "D2", "formula": "=SUM(B2:C2)", "label": "Total"}
-      ],
-      "summary_rows": [
-        {"label": "TOTAL", "col": 1, "formula": "=SUM(B2:B100)"}
-      ],
-      "conditional_formatting": [
-        {"range": "B2:B20", "type": "colorscale"},
-        {"range": "C2:C20", "type": "databar"},
-        {"range": "D2:D20", "type": "highlight_high", "threshold": 500}
-      ],
-      "chart": {
-        "type": "bar",
-        "title": "Chart Title",
-        "data_cols": [1],
-        "category_col": 0
-      },
-      "protection": null
-    }
-  ],
-  "metadata": {
-    "title": "Report Title",
-    "description": "What this spreadsheet does",
-    "author": "XLforge AI"
-  }
-}
-
-==============================
-ABSOLUTE RULES - NEVER BREAK:
-==============================
-
-RULE 1 - UNDERSTAND THE FILE COMPLETELY:
-- Read every single row without skipping
-- Understand exactly what kind of data it contains
-- Complete ALL missing values intelligently
-- Never replace file data with fake generated data
-
-RULE 2 - SOLVE EVERYTHING:
-Math problems -> compute exact answers AS REAL INTEGERS/FLOATS
-Questions with blanks -> fill correct answers
-Missing totals -> calculate them
-Empty grade columns -> compute grades A/B/C/D/F
-Blank status columns -> determine correct status
-Answer/Result columns -> COMPUTED VALUES not formulas
-
-ADDITION EXAMPLE - if file has "1021 + 707" in column B and blank Answer in column C:
-WRONG row: [1, "1021 + 707", "1728"]   <- "1728" is a string, WRONG
-WRONG row: [1, 1728, 1728]             <- problem text became number, WRONG - destroys the question!
-CORRECT:   [1, "1021 + 707", 1728]     <- problem text stays as-is, answer is integer, CORRECT
-
-CRITICAL RULE FOR PROBLEM/QUESTION COLUMNS:
-- The "Problem" or "Question" column text like "1021 + 707" MUST stay as a STRING exactly as it was
-- NEVER evaluate or replace the problem text with a number
-- ONLY the "Answer" or "Result" column gets the computed integer value
-- Keep original text in problem column, put solved integer in answer column
-
-IF the Answer/Result column already has values, VERIFY them and correct wrong ones.
-ALWAYS output answers as integers or floats in the ANSWER column, NEVER as strings.
-NEVER put a number in the PROBLEM/QUESTION column - keep it as the original text.
-
-SUMMARY ROW RULE - CRITICAL:
-headers = ["Question No", "Addition Problem", "Answer"]  -> indices 0, 1, 2
-TOTAL must sum column index 2 = column C in Excel
-CORRECT: {"label":"TOTAL","col":2,"formula":"=IFERROR(SUM(C2:C101),0)"}
-WRONG:   {"label":"TOTAL","col":1,"formula":"=SUM(B2:B101)"}  <- sums wrong column!
-COUNT rows carefully before writing the formula range.
-
-RULE 3 - COPY ALL ROWS:
-If file has 50 rows -> output must have 50 rows
-If file has 100 rows -> output must have 100 rows
-NEVER reduce rows
-
-RULE 4 - FOLLOW THE PROMPT STRICTLY:
-Only do what the user asked. If they say "solve the math problems", solve them.
-If they say "add a chart", add a chart. If they do NOT mention chart, do NOT add one.
-If they say "make chart in 2nd sheet", set "sheet": 1 in the chart JSON.
-Do NOT add extra columns, sheets, or features that were not requested.
-When a file is uploaded without any special instructions, then you may add value intelligently.
-Math problems -> solve all, put integer answers in Answer column
-Student marks -> add Total, Average, Grade, Pass/Fail only if not already present
-Financial data -> add totals and summaries
-Do NOT add charts unless explicitly requested.
-
-RULE 5 - REAL NUMBERS:
-Prices, salaries, scores -> integers or floats, NEVER strings
-BAD: ["John", "50000"]
-GOOD: ["John", 50000]
-
-RULE 6 - SAFE FORMULAS ONLY:
-Always wrap VLOOKUP in IFERROR:
-=IFERROR(VLOOKUP(A2,Sheet2!$A:$B,2,FALSE),"Not Found")
-
-VLOOKUP ACROSS MULTIPLE SHEETS - use sheet name reference:
-=IFERROR(VLOOKUP(A2,Sheet2!$A:$D,3,FALSE),"Not Found")
-=IFERROR(VLOOKUP(A2,Summary!$A:$Z,2,FALSE),IFERROR(VLOOKUP(A2,Data!$A:$Z,2,FALSE),"Not Found"))
-
-For multiple sheet lookups, always create a Summary/Dashboard sheet that pulls data from all other sheets using VLOOKUP or INDEX/MATCH.
-
-Valid formulas:
-=SUM(B2:B10), =AVERAGE(B2:B10), =MAX(B2:B10), =MIN(B2:B10)
-=IF(B2>90,"A",IF(B2>80,"B",IF(B2>70,"C",IF(B2>60,"D","F"))))
-=COUNTIF(B2:B10,">100"), =SUMIF(A2:A10,"North",B2:B10)
-=RANK(B2,$B$2:$B$100,0), =TODAY(), =TEXT(A2,"DD-MMM-YYYY")
-=IFERROR(formula,"fallback")
-=INDEX(Sheet2!$B:$B,MATCH(A2,Sheet2!$A:$A,0))
-
-RULE 6B - NEVER #VALUE!:
-- Answer/result columns MUST contain integers or floats, NEVER strings
-- SUM formula range must NEVER include header row (start from row 2)
-- ALL summary formulas must be wrapped in IFERROR(...,0)
-- TOTAL row formula for column C with 100 data rows: =IFERROR(SUM(C2:C101),0)
-- Double-check every formula range matches actual data rows
-
-RULE 7 - MULTIPLE SHEETS WHEN HELPFUL:
-For complex data, create:
-Sheet 1: Raw data / main table
-Sheet 2: Summary / dashboard
-Sheet 3: Charts data
-
-RULE 8 - CHARTS:
-type options: "bar", "line", "pie", "area"
-data_cols: list of 0-indexed number columns
-category_col: 0-indexed label column
-sheet: 0-indexed sheet number where chart is placed. Default 0 (same sheet). Use 1 for 2nd sheet.
-ONLY add a chart if the user explicitly asks for one OR the data is clearly trend/comparative.
-If user says "make chart in 2nd sheet", add chart with "sheet": 1 in the chart JSON object.
-Do NOT add charts that the user did not ask for.
-
-RULE 9 - CONDITIONAL FORMATTING:
-"colorscale" -> red-yellow-green gradient on numeric ranges
-"databar" -> blue progress bars
-"highlight_high" -> green for above threshold
-
-RULE 10 - NO PLACEHOLDERS EVER:
-Never: val1, col1, value1, header1, item1, data1, sample, name1
-Always use real, meaningful data
-
-RULE 11 - PROFESSIONAL QUALITY:
-Every spreadsheet must look like it was made by a professional consultant.
-Add summary rows at the bottom.
-Add a totals/averages row.
-Use meaningful sheet names.
-Include metadata.
-
-RULE 12 - SUMMARY ROWS COLUMN INDEX:
-summary_rows "col" is 0-indexed matching the headers array.
-EXAMPLE: headers = ["Question No", "Addition Problem", "Answer"]
-To SUM the "Answer" column (index 2): {"label":"TOTAL","col":2,"formula":"=SUM(C2:C101)"}
-NEVER use col=1 to sum column C. Count carefully from 0.
-formula must reference the CORRECT Excel column letter."""
+ABSOLUTE RULES:
+1. NUMBERS: prices/scores/salaries MUST be int or float — WRONG:["John","50000"] CORRECT:["John",50000]
+2. MATH: if file has "1021+707" in Problem col, Answer col gets integer 1728 (not string). Problem text stays unchanged.
+3. SUMMARY ROWS: "col" is 0-indexed. headers=["A","B","C"] -> col 2 = column C. Always IFERROR.
+4. CHARTS: type=bar/line/pie/area; data_cols and category_col are 0-indexed integers.
+   - Add chart ONLY if user explicitly requests one.
+   - "chart in 2nd sheet" -> add "sheet":1 inside chart object.
+5. FORMULAS: always wrap in IFERROR. SUM range must start at row 2 (never row 1).
+6. ROWS: copy every row from uploaded file — no skipping, no reducing.
+7. PLACEHOLDERS: never use val1/item1/data1. Always real meaningful data, minimum 15 rows.
+8. ANY LANGUAGE: understand and process prompts in any language.
+9. SELF-CORRECT: if you are unsure, make a best guess and produce useful output."""
 
 
 # ======================================================
@@ -486,6 +336,161 @@ def sanitize_ai_response(data: dict) -> dict:
 
 
 # ======================================================
+# MODEL AUTO-DISCOVERY
+# ======================================================
+
+# Module-level cache: refreshed every hour so the app always uses active models
+_model_cache: dict = {"text": None, "image": None, "expires": None}
+
+# Models that handle structured text output well — tried in priority order
+_TEXT_MODEL_PRIORITY = [
+    "llama-3.3-70b-versatile",
+    "qwen/qwen3-32b",
+    "llama-3.1-8b-instant",
+    "groq/compound-mini",
+    "groq/compound",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "allam-2-7b",
+]
+
+# Patterns in model IDs that indicate non-text models to skip
+_NON_TEXT_PATTERNS = [
+    "whisper", "tts", "speech", "guard", "orpheus",
+    "canopylabs/", "prompt-guard",
+]
+
+# Vision models (multimodal) — kept separate since image uploads need them
+_VISION_MODEL_PRIORITY = [
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
+
+
+async def _fetch_groq_models(groq_api_key: str) -> list[str]:
+    """Return list of all active model IDs from Groq /v1/models."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {groq_api_key}"},
+        )
+        r.raise_for_status()
+        return [m["id"] for m in r.json().get("data", [])]
+
+
+async def get_active_text_models(groq_api_key: str) -> list[str]:
+    """
+    Return up to 4 text-capable Groq models that are currently active,
+    ordered by quality. Result is cached for 1 hour.
+    Falls back to a known-good list if the API call fails.
+    """
+    global _model_cache
+    now = datetime.utcnow()
+
+    if _model_cache["text"] and _model_cache["expires"] and _model_cache["expires"] > now:
+        return _model_cache["text"]
+
+    try:
+        all_ids = await _fetch_groq_models(groq_api_key)
+
+        # Filter to text-capable models only
+        text_ids = set(
+            m for m in all_ids
+            if not any(p in m.lower() for p in _NON_TEXT_PATTERNS)
+        )
+
+        # Build prioritised list: priority models first, then whatever else is active
+        ordered = [m for m in _TEXT_MODEL_PRIORITY if m in text_ids]
+        for m in sorted(text_ids):
+            if m not in ordered:
+                ordered.append(m)
+
+        result = ordered[:4] if ordered else ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        _model_cache["text"] = result
+        _model_cache["image"] = [m for m in _VISION_MODEL_PRIORITY if m in set(all_ids)][:3] or ["llama-3.3-70b-versatile"]
+        _model_cache["expires"] = now + timedelta(hours=1)
+        logger.info(f"Auto-discovered Groq text models: {result}")
+        return result
+
+    except Exception as e:
+        logger.warning(f"Model discovery failed ({e}), using hardcoded fallback list")
+        fallback = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        _model_cache["text"] = fallback
+        _model_cache["expires"] = now + timedelta(minutes=5)  # retry sooner on failure
+        return fallback
+
+
+async def get_active_image_models(groq_api_key: str) -> list[str]:
+    """Return vision-capable models; triggers text model discovery if cache is cold."""
+    await get_active_text_models(groq_api_key)  # populates _model_cache["image"]
+    return _model_cache.get("image") or ["llama-3.3-70b-versatile"]
+
+
+# ======================================================
+# JSON SELF-REPAIR
+# ======================================================
+
+def repair_json(text: str) -> str:
+    """
+    Self-heal common AI JSON truncation issues:
+    - Unterminated strings: close the string, then close open structures
+    - Missing closing braces/brackets: use a stack to close in correct order
+    - Trailing commas before ] or }
+    """
+    # Step 1: Detect and close any unterminated string
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    if in_string:
+        text = text + '"'   # close the open string
+
+    # Step 2: Remove trailing commas before ] or } and strip trailing whitespace
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    text = text.rstrip(' \t\n,')
+
+    # Step 3: Walk the text with a stack to figure out what needs closing.
+    # This correctly interleaves ] and } in the right order (unlike simple counting).
+    stack = []
+    in_str = False
+    esc = False
+    for ch in text:
+        if esc:
+            esc = False
+            continue
+        if ch == '\\' and in_str:
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == '{':
+            stack.append('}')
+        elif ch == '[':
+            stack.append(']')
+        elif ch in ('}', ']') and stack:
+            stack.pop()
+
+    # Close all open structures in reverse order
+    for closer in reversed(stack):
+        text += closer
+
+    # Step 4: Final trailing-comma cleanup after adding closers
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    return text
+
+
+# ======================================================
 # AI CALL (GROQ)
 # ======================================================
 
@@ -526,20 +531,14 @@ Return only JSON."""
     elif file_content and not prompt.strip():
         messages.append({
             "role": "user",
-            "content": f"""I uploaded a {file_type} file. Carefully read EVERY row and understand what this file is about, then create a perfect professional Excel output.
+            "content": f"""I uploaded a {file_type} file. Read every row and create a professional Excel output.
 
-FILE CONTENT (process ALL rows, do not skip any):
-{file_content[:15000]}
+FILE CONTENT:
+{file_content[:4000]}
 
-CRITICAL INSTRUCTIONS:
-- Read the file and understand its purpose automatically
-- If it contains math problems (like "123 + 456"), solve ALL of them and put integer answers
-- If it contains student marks, add Grade, Total, Rank, Pass/Fail
-- If it contains inventory, add Stock Status, Value, Reorder Alert
-- If it contains names/data with blanks, fill them intelligently
-- Copy EVERY SINGLE ROW without skipping - if 100 rows in file, output 100 rows
-- Add TOTAL/AVERAGE/SUMMARY rows at the bottom
-- Only add charts if the data is clearly comparative or trend-based
+- Solve math problems (put integer answers in Answer column, keep problem text unchanged)
+- Add Grade/Total/Rank/Pass-Fail for student marks
+- Copy every row without skipping
 - Return only JSON"""
         })
     elif file_content and prompt.strip():
@@ -548,16 +547,11 @@ CRITICAL INSTRUCTIONS:
             "content": f"""Task: {prompt}
 
 FILE TYPE: {file_type}
-FILE CONTENT (use ALL rows, do not skip any):
-{file_content[:15000]}
+FILE CONTENT:
+{file_content[:4000]}
 
-IMPORTANT:
-- Use every single row from the file
-- Complete any missing values or answers
-- Do the task described above using this real data
-- IMPORTANT: Only do exactly what the user asked. Do NOT add extra sheets, charts, or features that were not requested.
-- If user says "make chart", add a chart. If user does NOT mention chart, do NOT add one.
-- If user says "2nd sheet" for chart, set chart "sheet": 1 in the JSON.
+- Use every row from the file
+- Only do exactly what the user asked (no extra sheets/charts unless requested)
 - Return only JSON"""
         })
     else:
@@ -578,22 +572,25 @@ IMPORTANT:
     last_error = None
     groq_api_key = os.getenv('GROQ_API_KEY')
     if not groq_api_key:
-        raise ValueError("GROQ_API_KEY environment variable is not set. Please configure it in Render.")
-    # Only models confirmed active on Groq as of 2025 - dead models removed:
-    TEXT_MODELS = [
-        "llama-3.3-70b-versatile",  # attempt 1 - best model (active 2026)
-        "llama-3.1-8b-instant",     # attempt 2 - fast fallback (active 2026)
-        "qwen/qwen3-32b",           # attempt 3 - Qwen3 32B (active 2026)
-        "llama-3.1-8b-instant",     # attempt 4 - repeat fast fallback
-    ]
-    IMAGE_MODELS = [
-        "meta-llama/llama-4-scout-17b-16e-instruct",  # vision model (active 2026)
-        "llama-3.3-70b-versatile",  # fallback if vision model fails
-        "llama-3.1-8b-instant",     # last resort fallback
-    ]
+        raise ValueError("GROQ_API_KEY environment variable is not set.")
+
+    # Auto-discover active models from Groq API (cached 1 hour, falls back on error)
+    TEXT_MODELS = await get_active_text_models(groq_api_key)
+    IMAGE_MODELS = await get_active_image_models(groq_api_key)
+    # Pad to exactly 4 attempts by repeating the last available model
+    while len(TEXT_MODELS) < 4:
+        TEXT_MODELS = TEXT_MODELS + [TEXT_MODELS[-1]]
+
+    # Content limits shrink each retry to stay within model context windows:
+    CONTENT_LIMITS = [4000, 2000, 1000, 500]
+    # max_tokens per attempt (input ~300 tokens + max_tokens should be < 6000):
+    MAX_TOKENS_PER_ATTEMPT = [5500, 4500, 3500, 2500]
+    model = "unknown"  # safety init — overwritten at start of each attempt
     for attempt in range(4):
         try:
             temperature = [0.1, 0.2, 0.35, 0.5][attempt]
+            content_limit = CONTENT_LIMITS[attempt]
+
             if image_data:
                 model = IMAGE_MODELS[min(attempt, len(IMAGE_MODELS)-1)]
                 # If falling back to a text-only model, strip the image payload
@@ -605,6 +602,31 @@ IMPORTANT:
             else:
                 model = TEXT_MODELS[min(attempt, len(TEXT_MODELS)-1)]
 
+            # Rebuild user message with content truncated to this attempt's limit
+            if not image_data and file_content and attempt > 0:
+                truncated = file_content[:content_limit]
+                if file_content and not prompt.strip():
+                    messages[-1] = {
+                        "role": "user",
+                        "content": f"""I uploaded a {file_type} file. Read it and create a professional Excel output.
+
+FILE CONTENT:
+{truncated}
+
+CRITICAL: Read every row, solve math if present, add totals. Return only JSON."""
+                    }
+                elif file_content and prompt.strip():
+                    messages[-1] = {
+                        "role": "user",
+                        "content": f"""Task: {prompt}
+
+FILE TYPE: {file_type}
+FILE CONTENT:
+{truncated}
+
+Use every row from the file. Return only JSON."""
+                    }
+
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
@@ -614,7 +636,7 @@ IMPORTANT:
                     },
                     json={
                         "model": model,
-                        "max_tokens": 8000,
+                        "max_tokens": MAX_TOKENS_PER_ATTEMPT[attempt],
                         "temperature": temperature,
                         "messages": messages
                     }
@@ -623,7 +645,12 @@ IMPORTANT:
             if response.status_code == 429:
                 logger.warning(f"Rate limit on {model}, rotating to next model...")
                 last_error = f"Rate limit on {model}"
-                await asyncio.sleep(2)
+                await asyncio.sleep(3 + attempt * 2)  # 3s, 5s, 7s, 9s progressive backoff
+                continue
+            if response.status_code == 413:
+                logger.warning(f"Payload too large on {model} (attempt {attempt+1}), retrying with smaller content...")
+                last_error = f"Groq HTTP 413: request too large on {model}"
+                await asyncio.sleep(1)
                 continue
             if response.status_code not in (200, 429):
                 err_body = response.text[:300]
@@ -643,12 +670,26 @@ IMPORTANT:
             text = re.sub(r"\n?```$", "", text)
             text = text.strip()
 
-            # Find the outermost valid JSON object (handle nested braces correctly)
+            # Extract outermost JSON object — string-aware so "{}" inside string values
+            # don't confuse the depth counter
             brace_start = text.find('{')
             if brace_start != -1:
                 depth = 0
                 brace_end = -1
+                in_str = False
+                esc = False
                 for i, ch in enumerate(text[brace_start:], brace_start):
+                    if esc:
+                        esc = False
+                        continue
+                    if ch == '\\' and in_str:
+                        esc = True
+                        continue
+                    if ch == '"':
+                        in_str = not in_str
+                        continue
+                    if in_str:
+                        continue
                     if ch == '{':
                         depth += 1
                     elif ch == '}':
@@ -656,10 +697,20 @@ IMPORTANT:
                         if depth == 0:
                             brace_end = i + 1
                             break
-                if brace_end != -1:
-                    text = text[brace_start:brace_end]
+                text = text[brace_start:brace_end] if brace_end != -1 else text[brace_start:]
 
-            data = json.loads(text)
+            # Always apply self-repair (fixes unterminated strings, trailing commas, open brackets)
+            text = repair_json(text)
+
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                # Last-resort: strip everything after the last complete row array
+                last_bracket = text.rfind(']]')
+                if last_bracket != -1:
+                    text = text[:last_bracket + 2]
+                    text = repair_json(text)
+                data = json.loads(text)
 
             valid, reason = validate_ai_response(data)
             if not valid:
@@ -712,6 +763,7 @@ def build_excel(data: dict, output_path: str, password: str = None):
     WHITE = "FFFFFF"
     DARK = "1E293B"
     SUMMARY_BG = "1E3A5F"
+    pending_charts = []  # collected in pass 1, rendered in pass 2
 
     def thin_border():
         s = Side(style="thin", color="CCCCCC")
@@ -885,7 +937,7 @@ def build_excel(data: dict, output_path: str, password: str = None):
                         operator="greaterThan",
                         formula=[str(threshold)],
                         stopIfTrue=True,
-                        fill=PatternFill(bgColor="4ADE80"),
+                        fill=PatternFill(fill_type="solid", fgColor="4ADE80"),
                         font=Font(color="14532D", bold=True)
                     ))
                 elif t == "highlight_low":
@@ -894,65 +946,90 @@ def build_excel(data: dict, output_path: str, password: str = None):
                         operator="lessThan",
                         formula=[str(threshold)],
                         stopIfTrue=True,
-                        fill=PatternFill(bgColor="FCA5A5"),
+                        fill=PatternFill(fill_type="solid", fgColor="FCA5A5"),
                         font=Font(color="7F1D1D", bold=True)
                     ))
             except Exception as e:
                 logger.warning(f"CF error: {e}")
 
-        # -- Chart (supports cross-sheet placement via chart_def["sheet"] index)
+        # -- Collect chart definition for second-pass rendering (after all sheets exist)
         if chart_def:
-            try:
-                ctype  = chart_def.get("type", "bar")
-                dcols  = chart_def.get("data_cols", [1])
-                catcol = chart_def.get("category_col", 0)
-                ctitle = chart_def.get("title", "Chart")
-                target_sheet_idx = chart_def.get("sheet", None)
-                nrows  = len(rows)
+            pending_charts.append({
+                "chart_def": chart_def,
+                "data_ws": ws,
+                "nrows": len(rows),
+                "next_row": next_row,
+            })
 
-                chart_map = {
-                    "pie":  PieChart(),
-                    "line": LineChart(),
-                    "area": AreaChart(),
-                    "bar":  BarChart()
-                }
-                chart = chart_map.get(ctype, BarChart())
-                chart.title  = ctitle
-                chart.style  = 10
-                chart.height = 15
-                chart.width  = 28
+    # ======================================================
+    # SECOND PASS: Add all charts now that all sheets exist
+    # ======================================================
+    for pc in pending_charts:
+        try:
+            chart_def    = pc["chart_def"]
+            data_ws      = pc["data_ws"]
+            nrows        = pc["nrows"]
+            next_row_val = pc["next_row"]
 
-                if ctype == "bar":
-                    chart.type = "col"
+            ctype  = str(chart_def.get("type", "bar")).lower()
+            dcols  = chart_def.get("data_cols", [1])
+            catcol = int(chart_def.get("category_col", 0))
+            ctitle = str(chart_def.get("title", "Chart"))
+            target_sheet_idx = chart_def.get("sheet", None)
 
-                # Data references always point to this (data) sheet
-                if ctype == "pie":
-                    data_ref = Reference(ws, min_col=dcols[0]+1, min_row=1, max_row=nrows+1)
+            # Validate dcols
+            if not isinstance(dcols, list) or not dcols:
+                dcols = [1]
+            dcols = [int(d) for d in dcols]
+
+            # Build chart object with fallback
+            if ctype == "pie":
+                chart = PieChart()
+            elif ctype == "line":
+                chart = LineChart()
+            elif ctype == "area":
+                chart = AreaChart()
+            else:
+                chart = BarChart()
+                chart.type = "col"
+
+            chart.title  = ctitle
+            chart.style  = 10
+            chart.height = 15
+            chart.width  = 28
+
+            # Only reference actual data rows (exclude summary rows)
+            data_max_row = nrows + 1  # row 1 = header, row 2..nrows+1 = data
+
+            if ctype == "pie":
+                dc = dcols[0]
+                if dc + 1 > len(data_ws[1]):
+                    dc = 1
+                data_ref = Reference(data_ws, min_col=dc + 1, min_row=1, max_row=data_max_row)
+                chart.add_data(data_ref, titles_from_data=True)
+            else:
+                for dc in dcols:
+                    if dc + 1 > 50:
+                        continue
+                    data_ref = Reference(data_ws, min_col=dc + 1, min_row=1, max_row=data_max_row)
                     chart.add_data(data_ref, titles_from_data=True)
-                else:
-                    for dc in dcols:
-                        data_ref = Reference(ws, min_col=dc+1, min_row=1, max_row=nrows+1)
-                        chart.add_data(data_ref, titles_from_data=True)
 
-                cats = Reference(ws, min_col=catcol+1, min_row=2, max_row=nrows+1)
-                chart.set_categories(cats)
+            cats = Reference(data_ws, min_col=catcol + 1, min_row=2, max_row=data_max_row)
+            chart.set_categories(cats)
 
-                # Place chart on target sheet if specified, otherwise on this sheet
-                if target_sheet_idx is not None:
-                    all_sheets = wb.worksheets
-                    if 0 <= target_sheet_idx < len(all_sheets):
-                        chart_ws = all_sheets[target_sheet_idx]
-                        anchor_row = 3
-                    else:
-                        chart_ws = ws
-                        anchor_row = max(nrows + 4, next_row + 2)
-                else:
-                    chart_ws = ws
-                    anchor_row = max(nrows + 4, next_row + 2)
+            # Place on target sheet (all sheets now exist)
+            all_sheets = wb.worksheets
+            if target_sheet_idx is not None and 0 <= int(target_sheet_idx) < len(all_sheets):
+                chart_ws = all_sheets[int(target_sheet_idx)]
+                anchor_row = 3
+            else:
+                chart_ws = data_ws
+                anchor_row = max(nrows + 4, next_row_val + 2)
 
-                chart_ws.add_chart(chart, f"A{anchor_row}")
-            except Exception as e:
-                logger.warning(f"Chart error: {e}")
+            chart_ws.add_chart(chart, f"A{anchor_row}")
+            logger.info(f"Chart '{ctitle}' ({ctype}) placed on sheet '{chart_ws.title}' at row {anchor_row}")
+        except Exception as e:
+            logger.warning(f"Chart rendering error (skipped): {e}")
 
     wb.save(output_path)
     return output_path
@@ -1060,6 +1137,23 @@ def cleanup_old_files():
                 logger.debug(f"Cleanup skip {f}: {e}")
 
 
+def _prune_jobs_dict():
+    """Remove completed/failed jobs older than 24 h from the in-memory dict to prevent unbounded growth."""
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    to_remove = []
+    for jid, job in list(jobs.items()):
+        if job.get("status") in ("done", "failed"):
+            try:
+                if datetime.fromisoformat(job.get("created_at", "")) < cutoff:
+                    to_remove.append(jid)
+            except (ValueError, TypeError):
+                pass
+    for jid in to_remove:
+        jobs.pop(jid, None)
+    if to_remove:
+        logger.info(f"Pruned {len(to_remove)} old jobs from memory")
+
+
 # ======================================================
 # ENDPOINTS
 # ======================================================
@@ -1080,6 +1174,49 @@ def health():
         "sessions": len(conversation_memory),
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.get("/models")
+async def list_models():
+    """Return the currently active Groq models being used, and refresh the cache."""
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if not groq_api_key:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY not configured")
+    # Force refresh by clearing the cache expiry
+    _model_cache["expires"] = None
+    text_models = await get_active_text_models(groq_api_key)
+    image_models = await get_active_image_models(groq_api_key)
+    return {
+        "text_models": text_models,
+        "image_models": image_models,
+        "cache_expires": _model_cache["expires"].isoformat() if _model_cache["expires"] else None,
+        "note": "text_models[0] is attempt-1 (best quality); fallback order left→right"
+    }
+
+
+@app.on_event("startup")
+async def _on_startup():
+    """At startup: pre-warm the Groq model cache and launch the hourly cleanup loop."""
+    # 1. Pre-warm model discovery so the first user request has no extra latency
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if groq_api_key:
+        try:
+            models = await get_active_text_models(groq_api_key)
+            logger.info(f"Startup model pre-warm complete: {models}")
+        except Exception as e:
+            logger.warning(f"Startup model pre-warm failed: {e}")
+
+    # 2. Schedule hourly file and memory cleanup so the server never leaks
+    async def _cleanup_loop():
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                cleanup_old_files()
+                _prune_jobs_dict()
+            except Exception as e:
+                logger.warning(f"Scheduled cleanup error: {e}")
+
+    asyncio.create_task(_cleanup_loop())
 
 
 # -- MAIN GENERATE ENDPOINT (async job)
@@ -1250,10 +1387,8 @@ async def generate_sync(
         data = await call_groq(prompt, file_content, file_type, image_data, session_id)
         build_excel(data, output_path)
     except Exception as e:
-        # Clean up partial output file on failure
-        import pathlib
         try:
-            pathlib.Path(output_path).unlink(missing_ok=True)
+            Path(output_path).unlink(missing_ok=True)
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(e))
@@ -1396,10 +1531,11 @@ async def email_file(job_id: str, to_email: str = Form(...), subject: str = Form
             part.set_payload(f.read())
         encoders.encode_base64(part)
         filename = job.get("custom_filename", "xlforge_output.xlsx")
-        part.add_header("Content-Disposition", f"attachment; filename={filename}")
+        part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
         msg.attach(part)
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        import ssl as _ssl
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=_ssl.create_default_context()) as server:
             server.login(gmail_user, gmail_pass)
             server.send_message(msg)
 
@@ -1448,3 +1584,27 @@ def list_jobs():
             for j in list(jobs.values())[-50:]
         ]
     }
+
+
+# -- /process ALIAS (frontend compatibility — same as /generate)
+@app.post("/process")
+async def process_alias(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    prompt: str = Form(default=""),
+    session_id: str = Form(default=""),
+    custom_filename: str = Form(default=""),
+    password: str = Form(default=""),
+    files: List[UploadFile] = File(default=[]),
+    file: UploadFile = File(default=None),
+):
+    return await generate_excel(
+        background_tasks=background_tasks,
+        request=request,
+        prompt=prompt,
+        session_id=session_id,
+        custom_filename=custom_filename,
+        password=password,
+        files=files,
+        file=file,
+    )
