@@ -217,9 +217,9 @@ async def read_any_file(file: UploadFile) -> tuple:
 
 SYSTEM_PROMPT = """You are XLforge, the world's most advanced AI Excel expert. You read any file in ANY LANGUAGE, understand it completely, and produce perfect, professional Excel spreadsheets.
 
-LANGUAGE RULE: You understand and respond to prompts in ANY language — English, Hindi, Urdu, Arabic, French, Spanish, Chinese, Russian, German, Turkish, Bengali, Punjabi, or any other language. Always detect the language and process accordingly. Never reject a prompt due to language.
+LANGUAGE RULE: You understand and respond to prompts in ANY language - English, Hindi, Urdu, Arabic, French, Spanish, Chinese, Russian, German, Turkish, Bengali, Punjabi, or any other language. Always detect the language and process accordingly. Never reject a prompt due to language.
 
-SMART UNDERSTANDING RULE: Even if the prompt is unclear, misspelled, incomplete, or vague — you ALWAYS try your best to understand the intent and generate a useful Excel file. Never say you don't understand. Make your best guess and produce output.
+SMART UNDERSTANDING RULE: Even if the prompt is unclear, misspelled, incomplete, or vague - you ALWAYS try your best to understand the intent and generate a useful Excel file. Never say you don't understand. Make your best guess and produce output.
 
 OUTPUT RULE: Return ONLY a valid JSON object. Nothing else. No markdown. No explanation. No text before or after the JSON.
 
@@ -247,8 +247,7 @@ JSON FORMAT:
         "type": "bar",
         "title": "Chart Title",
         "data_cols": [1],
-        "category_col": 0,
-        "sheet": 0
+        "category_col": 0
       },
       "protection": null
     }
@@ -305,14 +304,16 @@ If file has 50 rows -> output must have 50 rows
 If file has 100 rows -> output must have 100 rows
 NEVER reduce rows
 
-RULE 4 - AUTO-UNDERSTAND MODE:
-Math problems -> solve all, add Answer column
-Student marks -> add Total, Average, Grade, Pass/Fail, Rank
-Financial data -> add totals, summaries, trends, chart
-Inventory -> add Stock Status, Reorder Alert, Value
-Employee data -> add summaries, department totals
-Survey data -> add analysis, counts, percentages
-Always add value beyond original file
+RULE 4 - FOLLOW THE PROMPT STRICTLY:
+Only do what the user asked. If they say "solve the math problems", solve them.
+If they say "add a chart", add a chart. If they do NOT mention chart, do NOT add one.
+If they say "make chart in 2nd sheet", set "sheet": 1 in the chart JSON.
+Do NOT add extra columns, sheets, or features that were not requested.
+When a file is uploaded without any special instructions, then you may add value intelligently.
+Math problems -> solve all, put integer answers in Answer column
+Student marks -> add Total, Average, Grade, Pass/Fail only if not already present
+Financial data -> add totals and summaries
+Do NOT add charts unless explicitly requested.
 
 RULE 5 - REAL NUMBERS:
 Prices, salaries, scores -> integers or floats, NEVER strings
@@ -354,10 +355,10 @@ RULE 8 - CHARTS:
 type options: "bar", "line", "pie", "area"
 data_cols: list of 0-indexed number columns
 category_col: 0-indexed label column
-sheet: 0-indexed sheet number where chart should be placed (default 0 = same sheet as data)
-      Use sheet=1 to place the chart on the SECOND sheet, sheet=2 for third sheet, etc.
-IMPORTANT: If the user says "make chart in 2nd sheet" or "chart on sheet 2", set "sheet": 1
-Always include chart for comparative or trend data
+sheet: 0-indexed sheet number where chart is placed. Default 0 (same sheet). Use 1 for 2nd sheet.
+ONLY add a chart if the user explicitly asks for one OR the data is clearly trend/comparative.
+If user says "make chart in 2nd sheet", add chart with "sheet": 1 in the chart JSON object.
+Do NOT add charts that the user did not ask for.
 
 RULE 9 - CONDITIONAL FORMATTING:
 "colorscale" -> red-yellow-green gradient on numeric ranges
@@ -416,7 +417,7 @@ def validate_ai_response(data: dict) -> tuple[bool, str]:
 def coerce_numeric(val):
     """Convert plain numeric strings to int/float.
     CRITICAL: Do NOT eval math expressions like '1021 + 707'.
-    Those are question/problem text — they must stay as strings in Excel.
+    Those are question/problem text - they must stay as strings in Excel.
     Only convert pure number strings: '125' -> 125, '3.14' -> 3.14, '-50' -> -50."""
     if isinstance(val, (int, float)):
         return val
@@ -428,7 +429,7 @@ def coerce_numeric(val):
         if v.startswith('='):
             return val
         # Only convert if it is a plain number: digits, optional leading minus, optional decimal.
-        # Rejects anything with spaces or operators (+, *, /, etc.) — those are text data.
+        # Rejects anything with spaces or operators (+, *, /, etc.) - those are text data.
         if re.match(r'^-?[\d]+(\.[\d]+)?$', v):
             try:
                 if '.' in v:
@@ -452,8 +453,7 @@ def sanitize_ai_response(data: dict) -> dict:
         headers = sheet.get("headers", [])
         header_len = len(headers)
 
-        # Identify which column indices are "problem/question" columns
-        # These must stay as strings even if they look numeric
+        # Identify problem/question columns - these must stay as strings (e.g. "93 + 19")
         problem_col_indices = set()
         for i, h in enumerate(headers):
             hl = str(h).lower()
@@ -470,7 +470,7 @@ def sanitize_ai_response(data: dict) -> dict:
                 new_row = []
                 for ci, v in enumerate(row):
                     if ci in problem_col_indices:
-                        # Keep as string — never coerce math expressions like "93 + 19"
+                        # Keep as string - never coerce math expressions like "93 + 19"
                         new_row.append(str(v) if v is not None else "")
                     else:
                         new_row.append(coerce_numeric(v))
@@ -537,9 +537,9 @@ CRITICAL INSTRUCTIONS:
 - If it contains student marks, add Grade, Total, Rank, Pass/Fail
 - If it contains inventory, add Stock Status, Value, Reorder Alert
 - If it contains names/data with blanks, fill them intelligently
-- Copy EVERY SINGLE ROW without skipping — if 100 rows in file, output 100 rows
-- Add professional formulas, charts, conditional formatting
+- Copy EVERY SINGLE ROW without skipping - if 100 rows in file, output 100 rows
 - Add TOTAL/AVERAGE/SUMMARY rows at the bottom
+- Only add charts if the data is clearly comparative or trend-based
 - Return only JSON"""
         })
     elif file_content and prompt.strip():
@@ -555,40 +555,41 @@ IMPORTANT:
 - Use every single row from the file
 - Complete any missing values or answers
 - Do the task described above using this real data
-- Add professional formatting and formulas
+- IMPORTANT: Only do exactly what the user asked. Do NOT add extra sheets, charts, or features that were not requested.
+- If user says "make chart", add a chart. If user does NOT mention chart, do NOT add one.
+- If user says "2nd sheet" for chart, set chart "sheet": 1 in the JSON.
 - Return only JSON"""
         })
     else:
         messages.append({
             "role": "user",
             "content": f"""Create a professional Excel spreadsheet: "{prompt}"
-- Real, meaningful data — minimum 15 rows
+- Real, meaningful data - minimum 15 rows
 - Multiple sheets if it makes sense
 - Professional formulas throughout
-- Add chart if data is comparative or trending
+- Add chart ONLY if the prompt specifically asks for one or data is clearly comparative
 - Add conditional formatting
 - Summary row at bottom
 - No placeholder values whatsoever
+- STRICTLY follow only what the prompt asks for, nothing extra
 - Return only JSON"""
         })
 
     last_error = None
-    # Validate API key is set before attempting any calls
     groq_api_key = os.getenv('GROQ_API_KEY')
     if not groq_api_key:
         raise ValueError("GROQ_API_KEY environment variable is not set. Please configure it in Render.")
-
     # Only models confirmed active on Groq as of 2025 - dead models removed:
     TEXT_MODELS = [
-        "llama-3.3-70b-versatile",    # attempt 1 - best model, low temp
-        "llama-3.1-8b-instant",       # attempt 2 - fast fallback
-        "gemma2-9b-it",               # attempt 3 - different provider
-        "mixtral-8x7b-32768",         # attempt 4 - reliable fallback (replaces removed llama-3.1-70b-versatile)
+        "llama-3.3-70b-versatile",  # attempt 1 - best model (active 2026)
+        "llama-3.1-8b-instant",     # attempt 2 - fast fallback (active 2026)
+        "qwen/qwen3-32b",           # attempt 3 - Qwen3 32B (active 2026)
+        "llama-3.1-8b-instant",     # attempt 4 - repeat fast fallback
     ]
     IMAGE_MODELS = [
-        "meta-llama/llama-4-scout-17b-16e-instruct",
-        "meta-llama/llama-4-maverick-17b-128e-instruct",
-        "llama-3.3-70b-versatile",  # fallback if vision models fail
+        "meta-llama/llama-4-scout-17b-16e-instruct",  # vision model (active 2026)
+        "llama-3.3-70b-versatile",  # fallback if vision model fails
+        "llama-3.1-8b-instant",     # last resort fallback
     ]
     for attempt in range(4):
         try:
@@ -623,7 +624,7 @@ IMPORTANT:
                 logger.warning(f"Rate limit on {model}, rotating to next model...")
                 last_error = f"Rate limit on {model}"
                 await asyncio.sleep(2)
-                continue  # naturally advances to next attempt
+                continue
             if response.status_code not in (200, 429):
                 err_body = response.text[:300]
                 # Permanent errors (400 bad model, 401 auth, 403 forbidden): log and skip model
@@ -757,17 +758,17 @@ def build_excel(data: dict, output_path: str, password: str = None):
         chart_def = sheet_def.get("chart", None)
         summary_rows = sheet_def.get("summary_rows", [])
 
-        # ── Tab color
+        # -- Tab color
         ws.sheet_properties.tabColor = BLUE
 
-        # ── Write headers
+        # -- Write headers
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=str(header))
             style_header(cell)
             ws.column_dimensions[get_column_letter(col)].width = max(len(str(header)) + 6, 18)
         ws.row_dimensions[1].height = 32
 
-        # ── Write data rows
+        # -- Write data rows
         for row_idx, row in enumerate(rows, 2):
             for col_idx, val in enumerate(row, 1):
                 header = headers[col_idx-1] if col_idx <= len(headers) else ""
@@ -775,7 +776,7 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 style_data(cell, row_idx, header)
             ws.row_dimensions[row_idx].height = 20
 
-        # ── Auto-fit column widths based on actual data content
+        # -- Auto-fit column widths based on actual data content
         for col_idx, header in enumerate(headers, 1):
             max_len = len(str(header))
             for row in rows:
@@ -784,7 +785,7 @@ def build_excel(data: dict, output_path: str, password: str = None):
                     max_len = max(max_len, len(str(cell_val)) if cell_val is not None else 0)
             ws.column_dimensions[get_column_letter(col_idx)].width = min(max(max_len + 4, 14), 60)
 
-        # ── Summary rows at bottom — AUTO-GENERATED, never trust AI col index
+        # -- Summary rows at bottom - AUTO-GENERATED, never trust AI col index
         next_row = len(rows) + 2
         data_start_row = 2
         data_end_row = len(rows) + 1
@@ -810,21 +811,20 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 style_summary(cell)
             next_row += 1
 
-            # Write AVERAGE row - use IFERROR + safe AVERAGEIF to avoid #DIV/0!
+            # Write AVERAGE row - IFERROR prevents #DIV/0! on empty/formula-only ranges
             for col_0idx in range(len(headers)):
                 cell = ws.cell(row=next_row, column=col_0idx + 1)
                 if col_0idx == 0:
                     cell.value = "AVERAGE"
                 elif col_0idx in numeric_cols:
                     col_letter = get_column_letter(col_0idx + 1)
-                    # IFERROR wraps the AVERAGE so empty ranges return 0 not #DIV/0!
                     cell.value = f'=IFERROR(AVERAGE({col_letter}{data_start_row}:{col_letter}{data_end_row}),0)'
                 else:
                     cell.value = None
                 style_summary(cell)
             next_row += 1
 
-        # ── Inline formulas
+        # -- Inline formulas
         for f in formulas:
             addr = f.get("cell", "")
             formula = f.get("formula", "")
@@ -849,18 +849,18 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 except:
                     pass
 
-        # ── Freeze panes & auto-filter
+        # -- Freeze panes & auto-filter
         ws.freeze_panes = "A2"
         if headers:
             last_data_row = len(rows) + 1
             ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{last_data_row}"
 
-        # ── Print settings
+        # -- Print settings
         ws.page_setup.fitToPage = True
         ws.page_setup.fitToWidth = 1
         ws.sheet_view.showGridLines = True
 
-        # ── Conditional formatting
+        # -- Conditional formatting
         for cf in cf_rules:
             r = cf.get("range", "")
             t = cf.get("type", "")
@@ -900,15 +900,13 @@ def build_excel(data: dict, output_path: str, password: str = None):
             except Exception as e:
                 logger.warning(f"CF error: {e}")
 
-        # ── Chart (placed on this sheet or a target sheet specified by chart_def["sheet"])
+        # -- Chart (supports cross-sheet placement via chart_def["sheet"] index)
         if chart_def:
             try:
                 ctype  = chart_def.get("type", "bar")
                 dcols  = chart_def.get("data_cols", [1])
                 catcol = chart_def.get("category_col", 0)
                 ctitle = chart_def.get("title", "Chart")
-                # "sheet" key: 0-indexed sheet index where chart should be placed
-                # Default is the current sheet (same index as this sheet_def)
                 target_sheet_idx = chart_def.get("sheet", None)
                 nrows  = len(rows)
 
@@ -927,7 +925,7 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 if ctype == "bar":
                     chart.type = "col"
 
-                # Data references always point to the DATA sheet (current ws)
+                # Data references always point to this (data) sheet
                 if ctype == "pie":
                     data_ref = Reference(ws, min_col=dcols[0]+1, min_row=1, max_row=nrows+1)
                     chart.add_data(data_ref, titles_from_data=True)
@@ -939,17 +937,19 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 cats = Reference(ws, min_col=catcol+1, min_row=2, max_row=nrows+1)
                 chart.set_categories(cats)
 
-                # Determine which worksheet to place the chart on
+                # Place chart on target sheet if specified, otherwise on this sheet
                 if target_sheet_idx is not None:
                     all_sheets = wb.worksheets
                     if 0 <= target_sheet_idx < len(all_sheets):
                         chart_ws = all_sheets[target_sheet_idx]
+                        anchor_row = 3
                     else:
-                        chart_ws = ws  # fallback to current sheet
+                        chart_ws = ws
+                        anchor_row = max(nrows + 4, next_row + 2)
                 else:
                     chart_ws = ws
+                    anchor_row = max(nrows + 4, next_row + 2)
 
-                anchor_row = 3 if chart_ws != ws else max(nrows + 4, next_row + 2)
                 chart_ws.add_chart(chart, f"A{anchor_row}")
             except Exception as e:
                 logger.warning(f"Chart error: {e}")
@@ -1082,7 +1082,7 @@ def health():
     }
 
 
-# ── MAIN GENERATE ENDPOINT (async job)
+# -- MAIN GENERATE ENDPOINT (async job)
 @app.post("/generate")
 async def generate_excel(
     background_tasks: BackgroundTasks,
@@ -1172,7 +1172,7 @@ async def generate_excel(
     }
 
 
-# ── STATUS CHECK
+# -- STATUS CHECK
 @app.get("/status/{job_id}")
 def job_status(job_id: str):
     job = jobs.get(job_id)
@@ -1186,7 +1186,7 @@ def job_status(job_id: str):
     return job
 
 
-# ── DOWNLOAD EXCEL
+# -- DOWNLOAD EXCEL
 @app.get("/download/{job_id}")
 def download_excel(job_id: str):
     job = jobs.get(job_id)
@@ -1204,7 +1204,7 @@ def download_excel(job_id: str):
     )
 
 
-# ── DOWNLOAD AS CSV
+# -- DOWNLOAD AS CSV
 @app.get("/download-csv/{job_id}")
 def download_csv(job_id: str):
     job = jobs.get(job_id)
@@ -1223,7 +1223,7 @@ def download_csv(job_id: str):
     )
 
 
-# ── SYNC GENERATE (for simple/quick requests, backwards compatible)
+# -- SYNC GENERATE (for simple/quick requests, backwards compatible)
 @app.post("/generate-sync")
 async def generate_sync(
     request: Request,
@@ -1270,7 +1270,7 @@ async def generate_sync(
     )
 
 
-# ── TEMPLATES
+# -- TEMPLATES
 @app.get("/templates")
 def get_templates(category: str = None):
     conn = get_db()
@@ -1333,7 +1333,7 @@ async def use_template(
             "template": tmpl["name"]}
 
 
-# ── CONVERSATION / SESSION
+# -- CONVERSATION / SESSION
 @app.get("/session/{session_id}/history")
 def get_session_history(session_id: str):
     history = conversation_memory.get(session_id, [])
@@ -1356,7 +1356,7 @@ def clear_session(session_id: str):
     return {"message": "Session cleared", "session_id": session_id}
 
 
-# ── JOB HISTORY
+# -- JOB HISTORY
 @app.get("/history")
 def get_history(limit: int = 20):
     conn = get_db()
@@ -1368,7 +1368,7 @@ def get_history(limit: int = 20):
     return {"jobs": [dict(r) for r in rows]}
 
 
-# ── EMAIL ENDPOINT
+# -- EMAIL ENDPOINT
 @app.post("/email/{job_id}")
 async def email_file(job_id: str, to_email: str = Form(...), subject: str = Form(default="Your Excel File from XLforge")):
     job = jobs.get(job_id)
@@ -1408,7 +1408,7 @@ async def email_file(job_id: str, to_email: str = Form(...), subject: str = Form
         raise HTTPException(status_code=500, detail=f"Email failed: {str(e)}")
 
 
-# ── STATS / MONITORING
+# -- STATS / MONITORING
 @app.get("/stats")
 def get_stats():
     conn = get_db()
@@ -1432,14 +1432,14 @@ def get_stats():
     }
 
 
-# ── CLEANUP ENDPOINT
+# -- CLEANUP ENDPOINT
 @app.post("/admin/cleanup")
 def run_cleanup():
     cleanup_old_files()
     return {"message": "Cleanup complete"}
 
 
-# ── LIST ACTIVE JOBS
+# -- LIST ACTIVE JOBS
 @app.get("/jobs")
 def list_jobs():
     return {
