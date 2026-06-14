@@ -20,9 +20,9 @@ from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # SETUP & CONFIG
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,18 +52,18 @@ for d in [INPUT_DIR, OUTPUT_DIR, TEMP_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # In-memory stores
-conversation_memory: dict = {}   # session_id → list of messages
-rate_limit_store: dict = {}      # ip → [timestamps]
-jobs: dict = {}                  # job_id → status dict
+conversation_memory: dict = {}   # session_id -> list of messages
+rate_limit_store: dict = {}      # ip -> [timestamps]
+jobs: dict = {}                  # job_id -> status dict
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 RATE_LIMIT = 15                     # requests per minute
 FILE_EXPIRY_HOURS = 24
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # DATABASE
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 def get_db():
     conn = sqlite3.connect("xlforge.db", check_same_thread=False)
@@ -132,9 +132,9 @@ def init_db():
 init_db()
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # RATE LIMITER
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 def check_rate_limit(ip: str) -> bool:
     now = time.time()
@@ -148,9 +148,9 @@ def check_rate_limit(ip: str) -> bool:
     return True
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # FILE READER
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 async def read_any_file(file: UploadFile) -> tuple:
     raw = await file.read()
@@ -211,9 +211,9 @@ async def read_any_file(file: UploadFile) -> tuple:
         return "", "unknown", None, raw
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # SYSTEM PROMPT
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 SYSTEM_PROMPT = """You are XLforge, the world's most advanced AI Excel expert. You read any file in ANY LANGUAGE, understand it completely, and produce perfect, professional Excel spreadsheets.
 
@@ -247,7 +247,8 @@ JSON FORMAT:
         "type": "bar",
         "title": "Chart Title",
         "data_cols": [1],
-        "category_col": 0
+        "category_col": 0,
+        "sheet": 0
       },
       "protection": null
     }
@@ -259,28 +260,28 @@ JSON FORMAT:
   }
 }
 
-══════════════════════════════
-ABSOLUTE RULES — NEVER BREAK:
-══════════════════════════════
+==============================
+ABSOLUTE RULES - NEVER BREAK:
+==============================
 
-RULE 1 — UNDERSTAND THE FILE COMPLETELY:
+RULE 1 - UNDERSTAND THE FILE COMPLETELY:
 - Read every single row without skipping
 - Understand exactly what kind of data it contains
 - Complete ALL missing values intelligently
 - Never replace file data with fake generated data
 
-RULE 2 — SOLVE EVERYTHING:
-Math problems → compute exact answers AS REAL INTEGERS/FLOATS
-Questions with blanks → fill correct answers
-Missing totals → calculate them
-Empty grade columns → compute grades A/B/C/D/F
-Blank status columns → determine correct status
-Answer/Result columns → COMPUTED VALUES not formulas
+RULE 2 - SOLVE EVERYTHING:
+Math problems -> compute exact answers AS REAL INTEGERS/FLOATS
+Questions with blanks -> fill correct answers
+Missing totals -> calculate them
+Empty grade columns -> compute grades A/B/C/D/F
+Blank status columns -> determine correct status
+Answer/Result columns -> COMPUTED VALUES not formulas
 
-ADDITION EXAMPLE — if file has "1021 + 707" in column B and blank Answer in column C:
-WRONG row: [1, "1021 + 707", "1728"]   ← "1728" is a string, WRONG
-WRONG row: [1, 1728, 1728]             ← problem text became number, WRONG — destroys the question!
-CORRECT:   [1, "1021 + 707", 1728]     ← problem text stays as-is, answer is integer, CORRECT
+ADDITION EXAMPLE - if file has "1021 + 707" in column B and blank Answer in column C:
+WRONG row: [1, "1021 + 707", "1728"]   <- "1728" is a string, WRONG
+WRONG row: [1, 1728, 1728]             <- problem text became number, WRONG - destroys the question!
+CORRECT:   [1, "1021 + 707", 1728]     <- problem text stays as-is, answer is integer, CORRECT
 
 CRITICAL RULE FOR PROBLEM/QUESTION COLUMNS:
 - The "Problem" or "Question" column text like "1021 + 707" MUST stay as a STRING exactly as it was
@@ -290,39 +291,39 @@ CRITICAL RULE FOR PROBLEM/QUESTION COLUMNS:
 
 IF the Answer/Result column already has values, VERIFY them and correct wrong ones.
 ALWAYS output answers as integers or floats in the ANSWER column, NEVER as strings.
-NEVER put a number in the PROBLEM/QUESTION column — keep it as the original text.
+NEVER put a number in the PROBLEM/QUESTION column - keep it as the original text.
 
-SUMMARY ROW RULE — CRITICAL:
-headers = ["Question No", "Addition Problem", "Answer"]  → indices 0, 1, 2
+SUMMARY ROW RULE - CRITICAL:
+headers = ["Question No", "Addition Problem", "Answer"]  -> indices 0, 1, 2
 TOTAL must sum column index 2 = column C in Excel
 CORRECT: {"label":"TOTAL","col":2,"formula":"=IFERROR(SUM(C2:C101),0)"}
-WRONG:   {"label":"TOTAL","col":1,"formula":"=SUM(B2:B101)"}  ← sums wrong column!
+WRONG:   {"label":"TOTAL","col":1,"formula":"=SUM(B2:B101)"}  <- sums wrong column!
 COUNT rows carefully before writing the formula range.
 
-RULE 3 — COPY ALL ROWS:
-If file has 50 rows → output must have 50 rows
-If file has 100 rows → output must have 100 rows
+RULE 3 - COPY ALL ROWS:
+If file has 50 rows -> output must have 50 rows
+If file has 100 rows -> output must have 100 rows
 NEVER reduce rows
 
-RULE 4 — AUTO-UNDERSTAND MODE:
-Math problems → solve all, add Answer column
-Student marks → add Total, Average, Grade, Pass/Fail, Rank
-Financial data → add totals, summaries, trends, chart
-Inventory → add Stock Status, Reorder Alert, Value
-Employee data → add summaries, department totals
-Survey data → add analysis, counts, percentages
+RULE 4 - AUTO-UNDERSTAND MODE:
+Math problems -> solve all, add Answer column
+Student marks -> add Total, Average, Grade, Pass/Fail, Rank
+Financial data -> add totals, summaries, trends, chart
+Inventory -> add Stock Status, Reorder Alert, Value
+Employee data -> add summaries, department totals
+Survey data -> add analysis, counts, percentages
 Always add value beyond original file
 
-RULE 5 — REAL NUMBERS:
-Prices, salaries, scores → integers or floats, NEVER strings
+RULE 5 - REAL NUMBERS:
+Prices, salaries, scores -> integers or floats, NEVER strings
 BAD: ["John", "50000"]
 GOOD: ["John", 50000]
 
-RULE 6 — SAFE FORMULAS ONLY:
+RULE 6 - SAFE FORMULAS ONLY:
 Always wrap VLOOKUP in IFERROR:
 =IFERROR(VLOOKUP(A2,Sheet2!$A:$B,2,FALSE),"Not Found")
 
-VLOOKUP ACROSS MULTIPLE SHEETS — use sheet name reference:
+VLOOKUP ACROSS MULTIPLE SHEETS - use sheet name reference:
 =IFERROR(VLOOKUP(A2,Sheet2!$A:$D,3,FALSE),"Not Found")
 =IFERROR(VLOOKUP(A2,Summary!$A:$Z,2,FALSE),IFERROR(VLOOKUP(A2,Data!$A:$Z,2,FALSE),"Not Found"))
 
@@ -336,42 +337,45 @@ Valid formulas:
 =IFERROR(formula,"fallback")
 =INDEX(Sheet2!$B:$B,MATCH(A2,Sheet2!$A:$A,0))
 
-RULE 6B — NEVER #VALUE!:
+RULE 6B - NEVER #VALUE!:
 - Answer/result columns MUST contain integers or floats, NEVER strings
 - SUM formula range must NEVER include header row (start from row 2)
 - ALL summary formulas must be wrapped in IFERROR(...,0)
 - TOTAL row formula for column C with 100 data rows: =IFERROR(SUM(C2:C101),0)
 - Double-check every formula range matches actual data rows
 
-RULE 7 — MULTIPLE SHEETS WHEN HELPFUL:
+RULE 7 - MULTIPLE SHEETS WHEN HELPFUL:
 For complex data, create:
 Sheet 1: Raw data / main table
 Sheet 2: Summary / dashboard
 Sheet 3: Charts data
 
-RULE 8 — CHARTS:
+RULE 8 - CHARTS:
 type options: "bar", "line", "pie", "area"
 data_cols: list of 0-indexed number columns
 category_col: 0-indexed label column
+sheet: 0-indexed sheet number where chart should be placed (default 0 = same sheet as data)
+      Use sheet=1 to place the chart on the SECOND sheet, sheet=2 for third sheet, etc.
+IMPORTANT: If the user says "make chart in 2nd sheet" or "chart on sheet 2", set "sheet": 1
 Always include chart for comparative or trend data
 
-RULE 9 — CONDITIONAL FORMATTING:
-"colorscale" → red-yellow-green gradient on numeric ranges
-"databar" → blue progress bars
-"highlight_high" → green for above threshold
+RULE 9 - CONDITIONAL FORMATTING:
+"colorscale" -> red-yellow-green gradient on numeric ranges
+"databar" -> blue progress bars
+"highlight_high" -> green for above threshold
 
-RULE 10 — NO PLACEHOLDERS EVER:
+RULE 10 - NO PLACEHOLDERS EVER:
 Never: val1, col1, value1, header1, item1, data1, sample, name1
 Always use real, meaningful data
 
-RULE 11 — PROFESSIONAL QUALITY:
+RULE 11 - PROFESSIONAL QUALITY:
 Every spreadsheet must look like it was made by a professional consultant.
 Add summary rows at the bottom.
 Add a totals/averages row.
 Use meaningful sheet names.
 Include metadata.
 
-RULE 12 — SUMMARY ROWS COLUMN INDEX:
+RULE 12 - SUMMARY ROWS COLUMN INDEX:
 summary_rows "col" is 0-indexed matching the headers array.
 EXAMPLE: headers = ["Question No", "Addition Problem", "Answer"]
 To SUM the "Answer" column (index 2): {"label":"TOTAL","col":2,"formula":"=SUM(C2:C101)"}
@@ -379,9 +383,9 @@ NEVER use col=1 to sum column C. Count carefully from 0.
 formula must reference the CORRECT Excel column letter."""
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # VALIDATION LAYER
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 def validate_ai_response(data: dict) -> tuple[bool, str]:
     if not isinstance(data, dict):
@@ -445,16 +449,32 @@ def coerce_numeric(val):
 
 def sanitize_ai_response(data: dict) -> dict:
     for sheet in data.get("sheets", []):
-        header_len = len(sheet.get("headers", []))
+        headers = sheet.get("headers", [])
+        header_len = len(headers)
+
+        # Identify which column indices are "problem/question" columns
+        # These must stay as strings even if they look numeric
+        problem_col_indices = set()
+        for i, h in enumerate(headers):
+            hl = str(h).lower()
+            if any(k in hl for k in ["problem", "question", "expression", "equation", "task"]):
+                problem_col_indices.add(i)
+
         cleaned_rows = []
         for row in sheet.get("rows", []):
             if isinstance(row, list):
                 row = row[:header_len]
                 while len(row) < header_len:
                     row.append("")
-                # Coerce numeric strings → real numbers so SUM/formulas work
-                row = [coerce_numeric(v) for v in row]
-                cleaned_rows.append(row)
+                # Coerce numeric strings to real numbers, but protect problem/question columns
+                new_row = []
+                for ci, v in enumerate(row):
+                    if ci in problem_col_indices:
+                        # Keep as string — never coerce math expressions like "93 + 19"
+                        new_row.append(str(v) if v is not None else "")
+                    else:
+                        new_row.append(coerce_numeric(v))
+                cleaned_rows.append(new_row)
         sheet["rows"] = cleaned_rows
         if not sheet.get("formulas"):
             sheet["formulas"] = []
@@ -465,9 +485,9 @@ def sanitize_ai_response(data: dict) -> dict:
     return data
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # AI CALL (GROQ)
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 async def call_groq(
     prompt: str,
@@ -553,12 +573,17 @@ IMPORTANT:
         })
 
     last_error = None
-    # Only models confirmed active on Groq as of 2025 — dead models removed:
+    # Validate API key is set before attempting any calls
+    groq_api_key = os.getenv('GROQ_API_KEY')
+    if not groq_api_key:
+        raise ValueError("GROQ_API_KEY environment variable is not set. Please configure it in Render.")
+
+    # Only models confirmed active on Groq as of 2025 - dead models removed:
     TEXT_MODELS = [
-        "llama-3.3-70b-versatile",    # attempt 1 — best model, low temp
-        "llama-3.1-8b-instant",       # attempt 2 — fast fallback
-        "gemma2-9b-it",               # attempt 3 — different provider
-        "llama-3.1-70b-versatile",    # attempt 4 — groq versatile v2
+        "llama-3.3-70b-versatile",    # attempt 1 - best model, low temp
+        "llama-3.1-8b-instant",       # attempt 2 - fast fallback
+        "gemma2-9b-it",               # attempt 3 - different provider
+        "mixtral-8x7b-32768",         # attempt 4 - reliable fallback (replaces removed llama-3.1-70b-versatile)
     ]
     IMAGE_MODELS = [
         "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -583,7 +608,7 @@ IMPORTANT:
                 response = await client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
+                        "Authorization": f"Bearer {groq_api_key}",
                         "Content-Type": "application/json"
                     },
                     json={
@@ -597,10 +622,8 @@ IMPORTANT:
             if response.status_code == 429:
                 logger.warning(f"Rate limit on {model}, rotating to next model...")
                 last_error = f"Rate limit on {model}"
-                # Always advance attempt counter to use a different model
                 await asyncio.sleep(2)
-                attempt += 0  # continue naturally to next attempt
-                continue
+                continue  # naturally advances to next attempt
             if response.status_code not in (200, 429):
                 err_body = response.text[:300]
                 # Permanent errors (400 bad model, 401 auth, 403 forbidden): log and skip model
@@ -675,9 +698,9 @@ IMPORTANT:
     raise ValueError(f"AI generation failed after 4 attempts. Last error: {last_error}")
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # EXCEL BUILDER
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 def build_excel(data: dict, output_path: str, password: str = None):
     wb = openpyxl.Workbook()
@@ -778,11 +801,24 @@ def build_excel(data: dict, output_path: str, password: str = None):
             for col_0idx in range(len(headers)):
                 cell = ws.cell(row=next_row, column=col_0idx + 1)
                 if col_0idx == 0:
-                    # First column always gets the "TOTAL" label — never a SUM
                     cell.value = "TOTAL"
                 elif col_0idx in numeric_cols:
                     col_letter = get_column_letter(col_0idx + 1)
                     cell.value = f'=IFERROR(SUM({col_letter}{data_start_row}:{col_letter}{data_end_row}),0)'
+                else:
+                    cell.value = None
+                style_summary(cell)
+            next_row += 1
+
+            # Write AVERAGE row - use IFERROR + safe AVERAGEIF to avoid #DIV/0!
+            for col_0idx in range(len(headers)):
+                cell = ws.cell(row=next_row, column=col_0idx + 1)
+                if col_0idx == 0:
+                    cell.value = "AVERAGE"
+                elif col_0idx in numeric_cols:
+                    col_letter = get_column_letter(col_0idx + 1)
+                    # IFERROR wraps the AVERAGE so empty ranges return 0 not #DIV/0!
+                    cell.value = f'=IFERROR(AVERAGE({col_letter}{data_start_row}:{col_letter}{data_end_row}),0)'
                 else:
                     cell.value = None
                 style_summary(cell)
@@ -864,13 +900,16 @@ def build_excel(data: dict, output_path: str, password: str = None):
             except Exception as e:
                 logger.warning(f"CF error: {e}")
 
-        # ── Chart
+        # ── Chart (placed on this sheet or a target sheet specified by chart_def["sheet"])
         if chart_def:
             try:
                 ctype  = chart_def.get("type", "bar")
                 dcols  = chart_def.get("data_cols", [1])
                 catcol = chart_def.get("category_col", 0)
                 ctitle = chart_def.get("title", "Chart")
+                # "sheet" key: 0-indexed sheet index where chart should be placed
+                # Default is the current sheet (same index as this sheet_def)
+                target_sheet_idx = chart_def.get("sheet", None)
                 nrows  = len(rows)
 
                 chart_map = {
@@ -888,6 +927,7 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 if ctype == "bar":
                     chart.type = "col"
 
+                # Data references always point to the DATA sheet (current ws)
                 if ctype == "pie":
                     data_ref = Reference(ws, min_col=dcols[0]+1, min_row=1, max_row=nrows+1)
                     chart.add_data(data_ref, titles_from_data=True)
@@ -899,8 +939,18 @@ def build_excel(data: dict, output_path: str, password: str = None):
                 cats = Reference(ws, min_col=catcol+1, min_row=2, max_row=nrows+1)
                 chart.set_categories(cats)
 
-                anchor_row = max(nrows + 4, next_row + 2)
-                ws.add_chart(chart, f"A{anchor_row}")
+                # Determine which worksheet to place the chart on
+                if target_sheet_idx is not None:
+                    all_sheets = wb.worksheets
+                    if 0 <= target_sheet_idx < len(all_sheets):
+                        chart_ws = all_sheets[target_sheet_idx]
+                    else:
+                        chart_ws = ws  # fallback to current sheet
+                else:
+                    chart_ws = ws
+
+                anchor_row = 3 if chart_ws != ws else max(nrows + 4, next_row + 2)
+                chart_ws.add_chart(chart, f"A{anchor_row}")
             except Exception as e:
                 logger.warning(f"Chart error: {e}")
 
@@ -908,9 +958,9 @@ def build_excel(data: dict, output_path: str, password: str = None):
     return output_path
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # CSV CONVERTER
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 def excel_to_csv(excel_path: str) -> str:
     """Export first sheet of Excel to CSV. Returns the CSV file path."""
@@ -925,9 +975,9 @@ def excel_to_csv(excel_path: str) -> str:
     return csv_path
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # BACKGROUND JOB PROCESSOR
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 async def process_job(
     job_id: str,
@@ -980,20 +1030,23 @@ async def process_job(
 
     except Exception as e:
         jobs[job_id].update({"status": "failed", "error": str(e)})
-        conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?", (str(e), job_id))
-        conn.execute("""
-            INSERT INTO usage_log (job_id, session_id, success, created_at)
-            VALUES (?,?,0,?)
-        """, (job_id, session_id, datetime.utcnow().isoformat()))
-        conn.commit()
+        try:
+            conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?", (str(e), job_id))
+            conn.execute("""
+                INSERT INTO usage_log (job_id, session_id, success, created_at)
+                VALUES (?,?,0,?)
+            """, (job_id, session_id, datetime.utcnow().isoformat()))
+            conn.commit()
+        except Exception as db_err:
+            logger.error(f"DB write failed for job {job_id}: {db_err}")
         logger.error(f"Job {job_id} failed: {e}")
     finally:
         conn.close()
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # FILE CLEANUP (run periodically)
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 def cleanup_old_files():
     cutoff = time.time() - (FILE_EXPIRY_HOURS * 3600)
@@ -1007,9 +1060,9 @@ def cleanup_old_files():
                 logger.debug(f"Cleanup skip {f}: {e}")
 
 
-# ══════════════════════════════════════════════════════
+# ======================================================
 # ENDPOINTS
-# ══════════════════════════════════════════════════════
+# ======================================================
 
 @app.get("/")
 def root():
